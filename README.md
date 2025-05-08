@@ -45,7 +45,7 @@ kubectl-ai --model gemini-2.5-pro-exp-03-25
 kubectl-ai --quiet --model gemini-2.5-flash-preview-04-17 "check logs for nginx app in hello namespace"
 ```
 
-#### Using AI models running locally (ollama or llamacpp)
+#### Using AI models running locally (ollama or llama.cpp)
 
 You can use `kubectl-ai` with AI models running locally. `kubectl-ai` supports [ollama](https://ollama.com/) and [llama.cpp](https://github.com/ggml-org/llama.cpp) to use the AI models running locally.
 
@@ -94,14 +94,14 @@ kubectl-ai --llm-provider=openai --model=gpt-4.1
 ```
 
 #### Using OpenAI Compatible API
-For example, you can use aliyun qwen-xxx module as follows
+For example, you can use aliyun qwen-xxx models as follows
 ```bash
 export OPENAI_API_KEY=your_openai_api_key_here
 export OPENAI_ENDPOINT=https://dashscope.aliyuncs.com/compatible-mode/v1
 kubectl-ai --llm-provider=openai --model=qwen-plus
 ```
 
-* Note: `kubectl-ai` supports AI models from `gemini`, `vertexai`, `azopenai`, `openai`, `grok` and local LLM providers such as `ollama` and `llamacpp`.
+* Note: `kubectl-ai` supports AI models from `gemini`, `vertexai`, `azopenai`, `openai`, `grok` and local LLM providers such as `ollama` and `llama.cpp`.
 
 Run interactively:
 
@@ -114,7 +114,7 @@ The interactive mode allows you to have a chat with `kubectl-ai`, asking multipl
 Or, run with a task as input:
 
 ```shell
-kubectl-ai -quiet "fetch logs for nginx app in hello namespace"
+kubectl-ai --quiet "fetch logs for nginx app in hello namespace"
 ```
 
 Combine it with other unix commands:
@@ -151,19 +151,19 @@ Use it via the `kubectl` plug interface like this: `kubectl ai`.  kubectl will f
 
 ```bash
 # Get information about pods in the default namespace
-kubectl-ai -quiet "show me all pods in the default namespace"
+kubectl-ai --quiet "show me all pods in the default namespace"
 
 # Create a new deployment
-kubectl-ai -quiet "create a deployment named nginx with 3 replicas using the nginx:latest image"
+kubectl-ai --quiet "create a deployment named nginx with 3 replicas using the nginx:latest image"
 
 # Troubleshoot issues
-kubectl-ai -quiet "double the capacity for the nginx app"
+kubectl-ai --quiet "double the capacity for the nginx app"
 
 # Using Azure OpenAI instead of Gemini
-kubectl-ai --llm-provider=azopenai --model=your_azure_openai_deployment_name_here -quiet "scale the nginx deployment to 5 replicas"
+kubectl-ai --llm-provider=azopenai --model=your_azure_openai_deployment_name_here --quiet "scale the nginx deployment to 5 replicas"
 
 # Using OpenAI instead of Gemini
-kubectl-ai --llm-provider=openai --model=gpt-4.1 -quiet "scale the nginx deployment to 5 replicas"
+kubectl-ai --llm-provider=openai --model=gpt-4.1 --quiet "scale the nginx deployment to 5 replicas"
 ```
 
 The `kubectl-ai` will process your query, execute the appropriate kubectl commands, and provide you with the results and explanations.
