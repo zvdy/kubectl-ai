@@ -28,6 +28,14 @@ chmod a+x kubectl-ai
 sudo mv kubectl-ai /usr/local/bin/
 ```
 
+#### Install with Krew (Linux/macOS/Windows)
+First of all, you need to have krew insatlled, refer to [krew document](https://krew.sigs.k8s.io/docs/user-guide/setup/install/) for more details
+Then you can install with krew
+```shell
+kubectl krew install ai
+```
+Now you can invoke `kubectl-ai` as a kubectl plugin like this: `kubectl ai`.
+
 ### Usage
 
 #### Using Gemini (Default)
