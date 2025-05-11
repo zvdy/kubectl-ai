@@ -277,20 +277,96 @@ func (cs *grokChatSession) Send(ctx context.Context, contents ...any) (ChatRespo
 }
 
 // SendStreaming sends the user message(s) and returns an iterator for the LLM response stream.
-// NOTE: This function simulates streaming by making a single non-streaming call and returning an iterator
-// that yields the single response. This satisfies the agent's interface requirement.
+// This implementation uses the OpenAI streaming API to provide genuine streaming functionality.
 func (cs *grokChatSession) SendStreaming(ctx context.Context, contents ...any) (ChatResponseIterator, error) {
-	klog.V(1).InfoS("grokChatSession.SendStreaming called (simulated)", "model", cs.model)
+	klog.V(1).InfoS("grokChatSession.SendStreaming called (actual streaming)", "model", cs.model)
 
-	// Call the non-streaming Send method we implemented earlier
-	singleResponse, err := cs.Send(ctx, contents...)
-	if err != nil {
-		// Send already logs errors, just wrap it
-		return nil, fmt.Errorf("simulated streaming failed during non-streaming call: %w", err)
+	// 1. Append user message(s) to history - same as in Send
+	for _, content := range contents {
+		switch c := content.(type) {
+		case string:
+			klog.V(2).Infof("Adding user message to history: %s", c)
+			cs.history = append(cs.history, openai.UserMessage(c))
+		case FunctionCallResult:
+			klog.V(2).Infof("Adding tool call result to history: Name=%s, ID=%s", c.Name, c.ID)
+			resultJSON, err := json.Marshal(c.Result)
+			if err != nil {
+				klog.Errorf("Failed to marshal function call result: %v", err)
+				return nil, fmt.Errorf("failed to marshal function call result %q: %w", c.Name, err)
+			}
+			cs.history = append(cs.history, openai.ToolMessage(string(resultJSON), c.ID))
+		default:
+			klog.Warningf("Unhandled content type in SendStreaming: %T", content)
+			return nil, fmt.Errorf("unhandled content type: %T", content)
+		}
 	}
 
-	// Return an iterator function that yields the single response once.
-	return singletonChatResponseIterator(singleResponse), nil
+	// 2. Prepare the API request - same parameters as in Send
+	chatReq := openai.ChatCompletionNewParams{
+		Model:    openai.ChatModel(cs.model),
+		Messages: cs.history,
+	}
+	if len(cs.tools) > 0 {
+		chatReq.Tools = cs.tools
+	}
+
+	// 3. Start the Grok streaming request
+	klog.V(1).InfoS("Starting Grok streaming request", "model", cs.model, "messages", len(chatReq.Messages), "tools", len(chatReq.Tools))
+	stream := cs.client.Chat.Completions.NewStreaming(ctx, chatReq)
+
+	// Create an accumulator to track the full response
+	acc := openai.ChatCompletionAccumulator{}
+
+	// 4. Create and return the stream iterator
+	return func(yield func(ChatResponse, error) bool) {
+		var lastResponseChunk *grokChatStreamResponse
+
+		// Process stream chunks
+		for stream.Next() {
+			chunk := stream.Current()
+
+			// Update the accumulator with the new chunk
+			acc.AddChunk(chunk)
+
+			// Create a streaming response for this chunk
+			streamResponse := &grokChatStreamResponse{
+				streamChunk: chunk,
+				accumulator: acc,
+			}
+
+			// Keep track of the last response to append to history
+			lastResponseChunk = streamResponse
+
+			// Yield the streaming response
+			if !yield(streamResponse, nil) {
+				// Consumer wants to stop
+				break
+			}
+		}
+
+		// Check for errors after streaming completes
+		if err := stream.Err(); err != nil {
+			klog.Errorf("Error in Grok streaming: %v", err)
+			yield(nil, fmt.Errorf("Grok streaming error: %w", err))
+			return
+		}
+
+		// Once streaming is complete, update the conversation history with the complete message
+		if lastResponseChunk != nil && acc.Choices != nil && len(acc.Choices) > 0 {
+			// The accumulator has the complete message
+			completeMessage := openai.ChatCompletionMessage{
+				Content:   acc.Choices[0].Message.Content,
+				Role:      acc.Choices[0].Message.Role,
+				ToolCalls: acc.Choices[0].Message.ToolCalls,
+			}
+
+			// Append the full assistant response to history
+			cs.history = append(cs.history, completeMessage.ToParam())
+			klog.V(2).InfoS("Added complete assistant message to history",
+				"content_present", completeMessage.Content != "",
+				"tool_calls", len(completeMessage.ToolCalls))
+		}
+	}, nil
 }
 
 // IsRetryableError returns false for now.
@@ -397,4 +473,137 @@ func (p *grokPart) AsFunctionCalls() ([]FunctionCall, bool) {
 		}
 	}
 	return gollmCalls, true
+}
+
+// grokChatStreamResponse represents a streaming response chunk from Grok.
+type grokChatStreamResponse struct {
+	streamChunk openai.ChatCompletionChunk
+	accumulator openai.ChatCompletionAccumulator
+}
+
+// Ensure the streaming response implements ChatResponse interface.
+var _ ChatResponse = (*grokChatStreamResponse)(nil)
+
+// UsageMetadata returns usage metadata if available in the final chunk.
+func (r *grokChatStreamResponse) UsageMetadata() any {
+	if r.accumulator.Usage.TotalTokens > 0 {
+		return r.accumulator.Usage
+	}
+	return nil
+}
+
+// Candidates returns a slice with a single streaming candidate.
+func (r *grokChatStreamResponse) Candidates() []Candidate {
+	// Each streaming chunk gets converted to a candidate
+	if len(r.streamChunk.Choices) == 0 {
+		return nil
+	}
+
+	candidates := make([]Candidate, len(r.streamChunk.Choices))
+	for i, choice := range r.streamChunk.Choices {
+		candidates[i] = &grokStreamCandidate{streamChoice: choice}
+	}
+	return candidates
+}
+
+// grokStreamCandidate adapts a streaming chunk choice to the Candidate interface.
+type grokStreamCandidate struct {
+	streamChoice openai.ChatCompletionChunkChoice
+}
+
+// Ensure the streaming candidate implements Candidate interface.
+var _ Candidate = (*grokStreamCandidate)(nil)
+
+// String provides a string representation of the candidate.
+func (c *grokStreamCandidate) String() string {
+	return fmt.Sprintf("StreamingCandidate(Index: %d, FinishReason: %s)",
+		c.streamChoice.Index, c.streamChoice.FinishReason)
+}
+
+// Parts returns the parts of this streaming chunk candidate.
+func (c *grokStreamCandidate) Parts() []Part {
+	var parts []Part
+
+	// Include text content if present
+	if c.streamChoice.Delta.Content != "" {
+		parts = append(parts, &grokStreamPart{
+			content: c.streamChoice.Delta.Content,
+		})
+	}
+
+	// Include tool calls if present
+	if len(c.streamChoice.Delta.ToolCalls) > 0 {
+		parts = append(parts, &grokStreamPart{
+			toolCalls: c.streamChoice.Delta.ToolCalls,
+		})
+	}
+
+	return parts
+}
+
+// grokStreamPart adapts streaming parts to the Part interface.
+type grokStreamPart struct {
+	content   string
+	toolCalls []openai.ChatCompletionChunkChoiceDeltaToolCall
+}
+
+// Ensure the streaming part implements Part interface.
+var _ Part = (*grokStreamPart)(nil)
+
+// AsText returns the text content of this part if it has any.
+func (p *grokStreamPart) AsText() (string, bool) {
+	return p.content, p.content != ""
+}
+
+// AsFunctionCalls returns the function calls from this part if it has any.
+func (p *grokStreamPart) AsFunctionCalls() ([]FunctionCall, bool) {
+	if len(p.toolCalls) == 0 {
+		return nil, false
+	}
+
+	// Count valid function calls first
+	validCount := 0
+	for _, tc := range p.toolCalls {
+		// Only count tool calls that have a function name
+		if tc.Function.Name != "" {
+			validCount++
+		}
+	}
+
+	// If no valid function calls, return nil
+	if validCount == 0 {
+		return nil, false
+	}
+
+	// Create properly sized array
+	completeCalls := make([]FunctionCall, 0, validCount)
+
+	// Process tool calls
+	for _, tc := range p.toolCalls {
+		// Skip tool calls that don't have a complete function definition yet
+		if tc.Function.Name == "" {
+			continue
+		}
+
+		var args map[string]any
+		// Attempt to unmarshal arguments if present
+		if tc.Function.Arguments != "" {
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+				klog.V(2).Infof("Error unmarshaling function arguments: %v", err)
+				// Continue with empty args if unmarshal fails
+				args = make(map[string]any)
+			}
+		} else {
+			// Initialize empty args map if no arguments provided
+			args = make(map[string]any)
+		}
+
+		completeCalls = append(completeCalls, FunctionCall{
+			ID:        tc.ID,
+			Name:      tc.Function.Name,
+			Arguments: args,
+		})
+	}
+
+	return completeCalls, len(completeCalls) > 0
 }
