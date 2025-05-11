@@ -321,14 +321,31 @@ func (rc *retryChat[C]) SendStreaming(ctx context.Context, contents ...any) (Cha
 	var iterator ChatResponseIterator
 	var streamErr error
 
-	// Retry getting the initial stream
+	// First try to get a streaming connection
 	operation := func(ctx context.Context) (bool, error) {
 		iterator, streamErr = rc.underlying.SendStreaming(ctx, contents...)
 		return streamErr == nil, streamErr
 	}
 
-	// Create a custom retry function for the initial connection
-	_, err := RetryOperation(ctx, rc.config, rc.underlying.IsRetryableError, operation)
+	// Attempt streaming first
+	success, err := RetryOperation(ctx, rc.config, rc.underlying.IsRetryableError, operation)
+
+	// If streaming failed with a retryable error (likely streaming-related),
+	// fall back to non-streaming Send
+	if !success && err != nil && rc.underlying.IsRetryableError(err) {
+		klog.InfoS("Streaming failed after retries, falling back to non-streaming Send", "error", err)
+
+		// Try the non-streaming approach
+		resp, sendErr := rc.underlying.Send(ctx, contents...)
+		if sendErr != nil {
+			return nil, fmt.Errorf("both streaming and non-streaming attempts failed: streaming: %w, non-streaming: %v", err, sendErr)
+		}
+
+		// Wrap the single response in an iterator
+		return singletonChatResponseIterator(resp), nil
+	}
+
+	// If there was a non-retryable error or all retries failed, return the error
 	if err != nil {
 		return nil, err
 	}
@@ -350,10 +367,21 @@ func (rc *retryChat[C]) SendStreaming(ctx context.Context, contents ...any) (Cha
 			// It's a retryable error, attempt to reconnect the stream
 			klog.InfoS("Retryable error in stream", "error", err)
 
+			// Try falling back to non-streaming approach
+			fallbackResp, fallbackErr := rc.underlying.Send(ctx, contents...)
+			if fallbackErr == nil {
+				// Successfully got a non-streaming response
+				klog.InfoS("Successfully fell back to non-streaming after streaming error")
+				// This will be the last response in the stream
+				return yield(fallbackResp, nil)
+			}
+
+			klog.InfoS("Non-streaming fallback also failed", "error", fallbackErr)
+
 			var retrySucceeded bool
 			var retryErr error
 
-			// Try to get a new iterator with retries
+			// If fallback failed, try reconnecting the stream again
 			retryOperation := func(ctx context.Context) (bool, error) {
 				iterator, retryErr = rc.underlying.SendStreaming(ctx, contents...)
 				return retryErr == nil, retryErr
@@ -363,7 +391,7 @@ func (rc *retryChat[C]) SendStreaming(ctx context.Context, contents ...any) (Cha
 
 			if !retrySucceeded {
 				// If retry failed, pass the original error through
-				return yield(resp, fmt.Errorf("stream error, retry failed: %w", err))
+				return yield(resp, fmt.Errorf("stream error, retry and fallback failed: %w", err))
 			}
 
 			// Successfully reconnected, the next iteration of the outer iterator will use the new stream
