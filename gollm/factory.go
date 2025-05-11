@@ -317,8 +317,134 @@ func (rc *retryChat[C]) Send(ctx context.Context, contents ...any) (ChatResponse
 
 // Embed implements the Client interface for the retryClient decorator.
 func (rc *retryChat[C]) SendStreaming(ctx context.Context, contents ...any) (ChatResponseIterator, error) {
-	// TODO: Retry logic
-	return rc.underlying.SendStreaming(ctx, contents...)
+	// Define a retryable operation for streaming
+	var iterator ChatResponseIterator
+	var streamErr error
+
+	// Retry getting the initial stream
+	operation := func(ctx context.Context) (bool, error) {
+		iterator, streamErr = rc.underlying.SendStreaming(ctx, contents...)
+		return streamErr == nil, streamErr
+	}
+
+	// Create a custom retry function for the initial connection
+	_, err := RetryOperation(ctx, rc.config, rc.underlying.IsRetryableError, operation)
+	if err != nil {
+		return nil, err
+	}
+
+	// Return a wrapped iterator that handles retries on stream errors
+	return func(yield func(ChatResponse, error) bool) {
+		// Create a wrapper around the original yield function that handles retries
+		wrappedYield := func(resp ChatResponse, err error) bool {
+			// If there's no error, just pass through
+			if err == nil {
+				return yield(resp, nil)
+			}
+
+			// If there's an error and it's not retryable, pass it through
+			if !rc.underlying.IsRetryableError(err) {
+				return yield(resp, err)
+			}
+
+			// It's a retryable error, attempt to reconnect the stream
+			klog.InfoS("Retryable error in stream", "error", err)
+
+			var retrySucceeded bool
+			var retryErr error
+
+			// Try to get a new iterator with retries
+			retryOperation := func(ctx context.Context) (bool, error) {
+				iterator, retryErr = rc.underlying.SendStreaming(ctx, contents...)
+				return retryErr == nil, retryErr
+			}
+
+			retrySucceeded, retryErr = RetryOperation(ctx, rc.config, rc.underlying.IsRetryableError, retryOperation)
+
+			if !retrySucceeded {
+				// If retry failed, pass the original error through
+				return yield(resp, fmt.Errorf("stream error, retry failed: %w", err))
+			}
+
+			// Successfully reconnected, the next iteration of the outer iterator will use the new stream
+			klog.InfoS("Successfully reconnected stream after error")
+			return true // Continue the iteration
+		}
+
+		// Use the original iterator with our wrapped yield function
+		iterator(wrappedYield)
+	}, nil
+}
+
+// RetryOperation is a helper for retrying operations that return a boolean success indicator and an error
+func RetryOperation(
+	ctx context.Context,
+	config RetryConfig,
+	isRetryable IsRetryableFunc,
+	operation func(ctx context.Context) (bool, error),
+) (bool, error) {
+	var lastErr error
+	log := klog.FromContext(ctx)
+	backoff := config.InitialBackoff
+
+	for attempt := 1; attempt <= config.MaxAttempts; attempt++ {
+		success, err := operation(ctx)
+
+		if err == nil && success {
+			// Operation succeeded
+			return true, nil
+		}
+
+		lastErr = err // Store the last error encountered
+
+		// Check if context was cancelled
+		select {
+		case <-ctx.Done():
+			log.Info("Context cancelled after attempt", "attempt", attempt)
+			return false, ctx.Err()
+		default:
+			// Context not cancelled, proceed with retry logic
+		}
+
+		if !isRetryable(lastErr) {
+			log.Info("Attempt failed with non-retryable error", "attempt", attempt, "error", lastErr)
+			return false, lastErr
+		}
+
+		log.Info("Attempt failed with retryable error", "attempt", attempt, "error", lastErr)
+
+		if attempt == config.MaxAttempts {
+			// Max attempts reached
+			break
+		}
+
+		// Calculate wait time
+		waitTime := backoff
+		if config.Jitter {
+			waitTime += time.Duration(rand.Float64() * float64(backoff) / 2)
+		}
+
+		log.Info("Waiting before next attempt", "waitTime", waitTime, "attempt", attempt+1, "maxAttempts", config.MaxAttempts)
+
+		// Wait or react to context cancellation
+		select {
+		case <-time.After(waitTime):
+			// Wait finished
+		case <-ctx.Done():
+			log.Info("Context cancelled while waiting for retry after attempt", "attempt")
+			return false, ctx.Err()
+		}
+
+		// Increase backoff
+		backoff = time.Duration(float64(backoff) * config.BackoffFactor)
+		if backoff > config.MaxBackoff {
+			backoff = config.MaxBackoff
+		}
+	}
+
+	// If the loop finished, it means all attempts failed
+	errFinal := fmt.Errorf("operation failed after %d attempts: %w", config.MaxAttempts, lastErr)
+	return false, errFinal
 }
 
 func (rc *retryChat[C]) SetFunctionDefinitions(functionDefinitions []*FunctionDefinition) error {
