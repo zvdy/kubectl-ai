@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 
 	openai "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -389,9 +390,32 @@ func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any)
 	}, nil
 }
 
-// IsRetryableError returns false for now.
+// IsRetryableError determines if an error from the OpenAI API should be retried.
+// This specifically focuses on detecting streaming errors to enable fallback to non-streaming mode.
 func (cs *openAIChatSession) IsRetryableError(err error) bool {
-	// TODO: Implement actual retry logic if needed
+	if err == nil {
+		return false
+	}
+
+	// Common error strings for streaming issues
+	streamingErrorPatterns := []string{
+		"streaming",
+		"stream",
+		"sse",
+		"server-sent events",
+		"unexpected EOF",
+		"broken pipe",
+	}
+
+	// Check if the error message contains indicators of streaming issues
+	errMsg := strings.ToLower(err.Error())
+	for _, pattern := range streamingErrorPatterns {
+		if strings.Contains(errMsg, pattern) {
+			klog.V(1).Infof("Detected streaming error, will retry with non-streaming: %v", err)
+			return true
+		}
+	}
+
 	return false
 }
 
