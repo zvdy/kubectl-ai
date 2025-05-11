@@ -73,7 +73,17 @@ Possible values:
 func (t *Kubectl) Run(ctx context.Context, args map[string]any) (any, error) {
 	kubeconfig := ctx.Value(KubeconfigKey).(string)
 	workDir := ctx.Value(WorkDirKey).(string)
-	command := args["command"].(string)
+
+	// Add nil check for command
+	commandVal, ok := args["command"]
+	if !ok || commandVal == nil {
+		return &ExecResult{Error: "kubectl command not provided or is nil"}, nil
+	}
+
+	command, ok := commandVal.(string)
+	if !ok {
+		return &ExecResult{Error: "kubectl command must be a string"}, nil
+	}
 
 	return runKubectlCommand(ctx, command, workDir, kubeconfig)
 }
