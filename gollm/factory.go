@@ -280,7 +280,7 @@ func (rc *retryChat[C]) SendStreaming(ctx context.Context, contents ...any) (Cha
 	}
 
 	// Attempt streaming first
-	success, err := RetryOperation(ctx, rc.config, rc.underlying.IsRetryableError, operation)
+	success, err := retryOperation(ctx, rc.config, rc.underlying.IsRetryableError, operation)
 
 	// If streaming failed with a retryable error (likely streaming-related),
 	// fall back to non-streaming Send
@@ -334,12 +334,12 @@ func (rc *retryChat[C]) SendStreaming(ctx context.Context, contents ...any) (Cha
 			var retryErr error
 
 			// If fallback failed, try reconnecting the stream again
-			retryOperation := func(ctx context.Context) (bool, error) {
+			reconnectOperation := func(ctx context.Context) (bool, error) {
 				iterator, retryErr = rc.underlying.SendStreaming(ctx, contents...)
 				return retryErr == nil, retryErr
 			}
 
-			retrySucceeded, retryErr = RetryOperation(ctx, rc.config, rc.underlying.IsRetryableError, retryOperation)
+			retrySucceeded, retryErr = retryOperation(ctx, rc.config, rc.underlying.IsRetryableError, reconnectOperation)
 
 			if !retrySucceeded {
 				// If retry failed, pass the original error through
@@ -356,8 +356,8 @@ func (rc *retryChat[C]) SendStreaming(ctx context.Context, contents ...any) (Cha
 	}, nil
 }
 
-// RetryOperation is a helper for retrying operations that return a boolean success indicator and an error
-func RetryOperation(
+// retryOperation is a helper for retrying operations that return a boolean success indicator and an error
+func retryOperation(
 	ctx context.Context,
 	config RetryConfig,
 	isRetryable IsRetryableFunc,
