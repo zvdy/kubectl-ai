@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"strings"
 
 	openai "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -103,7 +102,6 @@ func (c *GrokClient) StartChat(systemPrompt, model string) Chat {
 		client:  c.client,
 		history: history,
 		model:   model,
-		// functionDefinitions and tools will be set later via SetFunctionDefinitions
 	}
 }
 
@@ -217,7 +215,7 @@ func (cs *grokChatSession) SetFunctionDefinitions(defs []*FunctionDefinition) er
 func (cs *grokChatSession) Send(ctx context.Context, contents ...any) (ChatResponse, error) {
 	klog.V(1).InfoS("grokChatSession.Send called", "model", cs.model, "history_len", len(cs.history))
 
-	// 1. Append user message(s) to history
+	// Append user message(s) to history
 	for _, content := range contents {
 		switch c := content.(type) {
 		case string:
@@ -239,7 +237,7 @@ func (cs *grokChatSession) Send(ctx context.Context, contents ...any) (ChatRespo
 		}
 	}
 
-	// 2. Prepare the API request
+	// Prepare the API request
 	chatReq := openai.ChatCompletionNewParams{
 		Model:    openai.ChatModel(cs.model),
 		Messages: cs.history,
@@ -249,7 +247,7 @@ func (cs *grokChatSession) Send(ctx context.Context, contents ...any) (ChatRespo
 		// chatReq.ToolChoice = openai.ToolChoiceAuto // Or specify if needed
 	}
 
-	// 3. Call the Grok API
+	// Call the Grok API
 	klog.V(1).InfoS("Sending request to Grok Chat API", "model", cs.model, "messages", len(chatReq.Messages), "tools", len(chatReq.Tools))
 	completion, err := cs.client.Chat.Completions.New(ctx, chatReq)
 	if err != nil {
@@ -258,7 +256,7 @@ func (cs *grokChatSession) Send(ctx context.Context, contents ...any) (ChatRespo
 	}
 	klog.V(1).InfoS("Received response from Grok Chat API", "id", completion.ID, "choices", len(completion.Choices))
 
-	// 4. Process the response
+	// Process the response
 	if len(completion.Choices) == 0 {
 		klog.Warning("Received response with no choices from Grok")
 		return nil, errors.New("received empty response from Grok (no choices)")
@@ -279,11 +277,10 @@ func (cs *grokChatSession) Send(ctx context.Context, contents ...any) (ChatRespo
 }
 
 // SendStreaming sends the user message(s) and returns an iterator for the LLM response stream.
-// This implementation uses the OpenAI streaming API to provide genuine streaming functionality.
 func (cs *grokChatSession) SendStreaming(ctx context.Context, contents ...any) (ChatResponseIterator, error) {
-	klog.V(1).InfoS("grokChatSession.SendStreaming called (actual streaming)", "model", cs.model)
+	klog.V(1).InfoS("Starting Grok streaming request", "model", cs.model, "streamingEnabled", true)
 
-	// 1. Append user message(s) to history - same as in Send
+	// Append user message(s) to history
 	for _, content := range contents {
 		switch c := content.(type) {
 		case string:
@@ -303,7 +300,7 @@ func (cs *grokChatSession) SendStreaming(ctx context.Context, contents ...any) (
 		}
 	}
 
-	// 2. Prepare the API request - same parameters as in Send
+	// Prepare the API request
 	chatReq := openai.ChatCompletionNewParams{
 		Model:    openai.ChatModel(cs.model),
 		Messages: cs.history,
@@ -312,14 +309,17 @@ func (cs *grokChatSession) SendStreaming(ctx context.Context, contents ...any) (
 		chatReq.Tools = cs.tools
 	}
 
-	// 3. Start the Grok streaming request
-	klog.V(1).InfoS("Starting Grok streaming request", "model", cs.model, "messages", len(chatReq.Messages), "tools", len(chatReq.Tools))
+	// Start the Grok streaming request
+	klog.V(1).InfoS("Sending streaming request to Grok API",
+		"model", cs.model,
+		"messageCount", len(chatReq.Messages),
+		"toolCount", len(chatReq.Tools))
 	stream := cs.client.Chat.Completions.NewStreaming(ctx, chatReq)
 
 	// Create an accumulator to track the full response
 	acc := openai.ChatCompletionAccumulator{}
 
-	// 4. Create and return the stream iterator
+	// Create and return the stream iterator
 	return func(yield func(ChatResponse, error) bool) {
 		var lastResponseChunk *grokChatStreamResponse
 
@@ -353,7 +353,7 @@ func (cs *grokChatSession) SendStreaming(ctx context.Context, contents ...any) (
 			return
 		}
 
-		// Once streaming is complete, update the conversation history with the complete message
+		// Update conversation history with the complete message
 		if lastResponseChunk != nil && acc.Choices != nil && len(acc.Choices) > 0 {
 			// The accumulator has the complete message
 			completeMessage := openai.ChatCompletionMessage{
@@ -372,32 +372,11 @@ func (cs *grokChatSession) SendStreaming(ctx context.Context, contents ...any) (
 }
 
 // IsRetryableError determines if an error from the Grok API should be retried.
-// This specifically focuses on detecting streaming errors to enable fallback to non-streaming mode.
 func (cs *grokChatSession) IsRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
-
-	// Common error strings for streaming issues
-	streamingErrorPatterns := []string{
-		"streaming",
-		"stream",
-		"sse",
-		"server-sent events",
-		"unexpected EOF",
-		"broken pipe",
-	}
-
-	// Check if the error message contains indicators of streaming issues
-	errMsg := strings.ToLower(err.Error())
-	for _, pattern := range streamingErrorPatterns {
-		if strings.Contains(errMsg, pattern) {
-			klog.V(1).Infof("Detected streaming error, will retry with non-streaming: %v", err)
-			return true
-		}
-	}
-
-	return false
+	return DefaultIsRetryableError(err)
 }
 
 // --- Helper structs for ChatResponse interface ---

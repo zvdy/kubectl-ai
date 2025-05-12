@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"strings"
 
 	openai "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -235,7 +234,7 @@ func (cs *openAIChatSession) SetFunctionDefinitions(defs []*FunctionDefinition) 
 func (cs *openAIChatSession) Send(ctx context.Context, contents ...any) (ChatResponse, error) {
 	klog.V(1).InfoS("openAIChatSession.Send called", "model", cs.model, "history_len", len(cs.history))
 
-	// 1. Append user message(s) to history
+	// Append user message(s) to history
 	for _, content := range contents {
 		switch c := content.(type) {
 		case string:
@@ -257,7 +256,7 @@ func (cs *openAIChatSession) Send(ctx context.Context, contents ...any) (ChatRes
 		}
 	}
 
-	// 2. Prepare the API request
+	// Prepare the API request
 	chatReq := openai.ChatCompletionNewParams{
 		Model:    openai.ChatModel(cs.model),
 		Messages: cs.history,
@@ -267,7 +266,7 @@ func (cs *openAIChatSession) Send(ctx context.Context, contents ...any) (ChatRes
 		// chatReq.ToolChoice = openai.ToolChoiceAuto // Or specify if needed
 	}
 
-	// 3. Call the OpenAI API
+	// Call the OpenAI API
 	klog.V(1).InfoS("Sending request to OpenAI Chat API", "model", cs.model, "messages", len(chatReq.Messages), "tools", len(chatReq.Tools))
 	completion, err := cs.client.Chat.Completions.New(ctx, chatReq)
 	if err != nil {
@@ -277,7 +276,7 @@ func (cs *openAIChatSession) Send(ctx context.Context, contents ...any) (ChatRes
 	}
 	klog.V(1).InfoS("Received response from OpenAI Chat API", "id", completion.ID, "choices", len(completion.Choices))
 
-	// 4. Process the response
+	// Process the response
 	if len(completion.Choices) == 0 {
 		klog.Warning("Received response with no choices from OpenAI")
 		return nil, errors.New("received empty response from OpenAI (no choices)")
@@ -298,11 +297,10 @@ func (cs *openAIChatSession) Send(ctx context.Context, contents ...any) (ChatRes
 }
 
 // SendStreaming sends the user message(s) and returns an iterator for the LLM response stream.
-// This implementation uses the OpenAI streaming API to provide genuine streaming functionality.
 func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any) (ChatResponseIterator, error) {
-	klog.V(1).InfoS("openAIChatSession.SendStreaming called (actual streaming)", "model", cs.model)
+	klog.V(1).InfoS("Starting OpenAI streaming request", "model", cs.model, "streamingEnabled", true)
 
-	// 1. Append user message(s) to history - same as in Send
+	// Append user message(s) to history
 	for _, content := range contents {
 		switch c := content.(type) {
 		case string:
@@ -322,7 +320,7 @@ func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any)
 		}
 	}
 
-	// 2. Prepare the API request - same parameters as in Send
+	// Prepare the API request
 	chatReq := openai.ChatCompletionNewParams{
 		Model:    openai.ChatModel(cs.model),
 		Messages: cs.history,
@@ -331,14 +329,17 @@ func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any)
 		chatReq.Tools = cs.tools
 	}
 
-	// 3. Start the OpenAI streaming request
-	klog.V(1).InfoS("Starting OpenAI streaming request", "model", cs.model, "messages", len(chatReq.Messages), "tools", len(chatReq.Tools))
+	// Start the OpenAI streaming request
+	klog.V(1).InfoS("Sending streaming request to OpenAI API",
+		"model", cs.model,
+		"messageCount", len(chatReq.Messages),
+		"toolCount", len(chatReq.Tools))
 	stream := cs.client.Chat.Completions.NewStreaming(ctx, chatReq)
 
 	// Create an accumulator to track the full response
 	acc := openai.ChatCompletionAccumulator{}
 
-	// 4. Create and return the stream iterator
+	// Create and return the stream iterator
 	return func(yield func(ChatResponse, error) bool) {
 		var lastResponseChunk *openAIChatStreamResponse
 
@@ -372,7 +373,7 @@ func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any)
 			return
 		}
 
-		// Once streaming is complete, update the conversation history with the complete message
+		// Update conversation history with the complete message
 		if lastResponseChunk != nil && acc.Choices != nil && len(acc.Choices) > 0 {
 			// The accumulator has the complete message
 			completeMessage := openai.ChatCompletionMessage{
@@ -391,32 +392,11 @@ func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any)
 }
 
 // IsRetryableError determines if an error from the OpenAI API should be retried.
-// This specifically focuses on detecting streaming errors to enable fallback to non-streaming mode.
 func (cs *openAIChatSession) IsRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
-
-	// Common error strings for streaming issues
-	streamingErrorPatterns := []string{
-		"streaming",
-		"stream",
-		"sse",
-		"server-sent events",
-		"unexpected EOF",
-		"broken pipe",
-	}
-
-	// Check if the error message contains indicators of streaming issues
-	errMsg := strings.ToLower(err.Error())
-	for _, pattern := range streamingErrorPatterns {
-		if strings.Contains(errMsg, pattern) {
-			klog.V(1).Infof("Detected streaming error, will retry with non-streaming: %v", err)
-			return true
-		}
-	}
-
-	return false
+	return DefaultIsRetryableError(err)
 }
 
 // --- Helper structs for ChatResponse interface ---
