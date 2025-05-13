@@ -78,13 +78,14 @@ type Options struct {
 	EnableToolUseShim bool `json:"enableToolUseShim,omitempty"`
 	// Quiet flag indicates if the agent should run in non-interactive mode.
 	// It requires a query to be provided as a positional argument.
-	Quiet                  bool   `json:"quiet,omitempty"`
-	MCPServer              bool   `json:"mcpServer,omitempty"`
-	MaxIterations          int    `json:"maxIterations,omitempty"`
-	KubeConfigPath         string `json:"kubeConfigPath,omitempty"`
-	PromptTemplateFilePath string `json:"promptTemplateFilePath,omitempty"`
-	TracePath              string `json:"tracePath,omitempty"`
-	RemoveWorkDir          bool   `json:"removeWorkDir,omitempty"`
+	Quiet                  bool     `json:"quiet,omitempty"`
+	MCPServer              bool     `json:"mcpServer,omitempty"`
+	MaxIterations          int      `json:"maxIterations,omitempty"`
+	KubeConfigPath         string   `json:"kubeConfigPath,omitempty"`
+	PromptTemplateFilePath string   `json:"promptTemplateFilePath,omitempty"`
+	ExtraPromptPaths       []string `json:"extraPromptPaths,omitempty"`
+	TracePath              string   `json:"tracePath,omitempty"`
+	RemoveWorkDir          bool     `json:"removeWorkDir,omitempty"`
 
 	// UserInterface is the type of user interface to use.
 	UserInterface UserInterface `json:"userInterface,omitempty"`
@@ -133,6 +134,7 @@ func (o *Options) InitDefaults() {
 	o.MaxIterations = 20
 	o.KubeConfigPath = ""
 	o.PromptTemplateFilePath = ""
+	o.ExtraPromptPaths = []string{}
 	o.TracePath = filepath.Join(os.TempDir(), "kubectl-ai-trace.txt")
 	o.RemoveWorkDir = false
 
@@ -257,6 +259,7 @@ func (opt *Options) bindCLIFlags(f *pflag.FlagSet) error {
 	f.IntVar(&opt.MaxIterations, "max-iterations", opt.MaxIterations, "maximum number of iterations agent will try before giving up")
 	f.StringVar(&opt.KubeConfigPath, "kubeconfig", opt.KubeConfigPath, "path to kubeconfig file")
 	f.StringVar(&opt.PromptTemplateFilePath, "prompt-template-file-path", opt.PromptTemplateFilePath, "path to custom prompt template file")
+	f.StringArrayVar(&opt.ExtraPromptPaths, "extra-prompt-paths", opt.ExtraPromptPaths, "extra prompt template paths")
 	f.StringVar(&opt.TracePath, "trace-path", opt.TracePath, "path to the trace file")
 	f.BoolVar(&opt.RemoveWorkDir, "remove-workdir", opt.RemoveWorkDir, "remove the temporary working directory after execution")
 
@@ -370,6 +373,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		LLM:                llmClient,
 		MaxIterations:      opt.MaxIterations,
 		PromptTemplateFile: opt.PromptTemplateFilePath,
+		ExtraPromptPaths:   opt.ExtraPromptPaths,
 		Tools:              tools.Default(),
 		Recorder:           recorder,
 		RemoveWorkDir:      opt.RemoveWorkDir,
