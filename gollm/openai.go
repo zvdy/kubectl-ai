@@ -207,7 +207,13 @@ func (c *OpenAIClient) SetResponseSchema(schema *Schema) error {
 func (c *OpenAIClient) ListModels(ctx context.Context) ([]string, error) {
 	res, err := c.client.Models.List(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("error listing models from OpenAI: %w", err)
+		if endpoint != "" {
+			return nil, fmt.Errorf(`
+			There was an error in listing models from %s. 
+			Please verify if the endpoint used is fully OpenAI compatible`,
+				endpoint)
+		}
+		return nil, fmt.Errorf("there was an error in listing models: %w", err)
 	}
 
 	modelsIDs := make([]string, 0, len(res.Data))
