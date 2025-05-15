@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 
 	openai "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -173,7 +174,7 @@ func (c *OpenAIClient) ListModels(ctx context.Context) ([]string, error) {
 			Please verify if the endpoint used is fully OpenAI compatible`,
 				endpoint)
 		}
-		return nil, fmt.Errorf("There was an error in listing models from OpenAI")
+		return nil, fmt.Errorf("there was an error in listing models: %w", err)
 	}
 
 	modelsIDs := make([]string, 0, len(res.Data))
@@ -298,7 +299,7 @@ func (cs *openAIChatSession) Send(ctx context.Context, contents ...any) (ChatRes
 
 // SendStreaming sends the user message(s) and returns an iterator for the LLM response stream.
 func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any) (ChatResponseIterator, error) {
-	klog.V(1).InfoS("Starting OpenAI streaming request", "model", cs.model, "streamingEnabled", true)
+	klog.V(1).InfoS("Starting OpenAI streaming request", "model", cs.model)
 
 	// Append user message(s) to history
 	for _, content := range contents {
@@ -310,12 +311,10 @@ func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any)
 			klog.V(2).Infof("Adding tool call result to history: Name=%s, ID=%s", c.Name, c.ID)
 			resultJSON, err := json.Marshal(c.Result)
 			if err != nil {
-				klog.Errorf("Failed to marshal function call result: %v", err)
 				return nil, fmt.Errorf("failed to marshal function call result %q: %w", c.Name, err)
 			}
 			cs.history = append(cs.history, openai.ToolMessage(string(resultJSON), c.ID))
 		default:
-			klog.Warningf("Unhandled content type in SendStreaming: %T", content)
 			return nil, fmt.Errorf("unhandled content type: %T", content)
 		}
 	}
@@ -334,6 +333,7 @@ func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any)
 		"model", cs.model,
 		"messageCount", len(chatReq.Messages),
 		"toolCount", len(chatReq.Tools))
+
 	stream := cs.client.Chat.Completions.NewStreaming(ctx, chatReq)
 
 	// Create an accumulator to track the full response
@@ -341,7 +341,11 @@ func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any)
 
 	// Create and return the stream iterator
 	return func(yield func(ChatResponse, error) bool) {
+		defer stream.Close()
+
 		var lastResponseChunk *openAIChatStreamResponse
+		var currentContent strings.Builder
+		var currentToolCalls []openai.ChatCompletionMessageToolCall
 
 		// Process stream chunks
 		for stream.Next() {
@@ -350,19 +354,58 @@ func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any)
 			// Update the accumulator with the new chunk
 			acc.AddChunk(chunk)
 
-			// Create a streaming response for this chunk
+			// Handle content completion
+			if _, ok := acc.JustFinishedContent(); ok {
+				klog.V(2).Info("Content stream finished")
+			}
+
+			// Handle refusal completion
+			if refusal, ok := acc.JustFinishedRefusal(); ok {
+				klog.V(2).Infof("Refusal stream finished: %v", refusal)
+				yield(nil, fmt.Errorf("model refused to respond: %v", refusal))
+				return
+			}
+
+			// Handle tool call completion
+			if tool, ok := acc.JustFinishedToolCall(); ok {
+				klog.V(2).Infof("Tool call finished: %s %s", tool.Name, tool.Arguments)
+				currentToolCalls = append(currentToolCalls, openai.ChatCompletionMessageToolCall{
+					ID: tool.Id,
+					Function: openai.ChatCompletionMessageToolCallFunction{
+						Name:      tool.Name,
+						Arguments: tool.Arguments,
+					},
+				})
+			}
+
+			// Only process new content from the current chunk
+			if len(chunk.Choices) > 0 {
+				delta := chunk.Choices[0].Delta
+				if delta.Content != "" {
+					currentContent.WriteString(delta.Content)
+				}
+			}
+
+			// Create a streaming response with only the new content
 			streamResponse := &openAIChatStreamResponse{
 				streamChunk: chunk,
 				accumulator: acc,
+				// Only include the new content from this chunk
+				content:   chunk.Choices[0].Delta.Content,
+				toolCalls: currentToolCalls,
 			}
 
-			// Keep track of the last response to append to history
-			lastResponseChunk = streamResponse
+			// Keep track of the last response for history
+			lastResponseChunk = &openAIChatStreamResponse{
+				streamChunk: chunk,
+				accumulator: acc,
+				content:     currentContent.String(), // Full accumulated content for history
+				toolCalls:   currentToolCalls,
+			}
 
-			// Yield the streaming response
+			// Yield the streaming response with just the new content
 			if !yield(streamResponse, nil) {
-				// Consumer wants to stop
-				break
+				return
 			}
 		}
 
@@ -374,12 +417,11 @@ func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any)
 		}
 
 		// Update conversation history with the complete message
-		if lastResponseChunk != nil && acc.Choices != nil && len(acc.Choices) > 0 {
-			// The accumulator has the complete message
+		if lastResponseChunk != nil {
 			completeMessage := openai.ChatCompletionMessage{
-				Content:   acc.Choices[0].Message.Content,
-				Role:      acc.Choices[0].Message.Role,
-				ToolCalls: acc.Choices[0].Message.ToolCalls,
+				Content:   currentContent.String(),
+				Role:      "assistant",
+				ToolCalls: currentToolCalls,
 			}
 
 			// Append the full assistant response to history
@@ -500,16 +542,60 @@ func (p *openAIPart) AsFunctionCalls() ([]FunctionCall, bool) {
 	return completeCalls, true
 }
 
-// openAIChatStreamResponse represents a streaming response chunk from OpenAI.
+// Update openAIChatStreamResponse to include accumulated content
 type openAIChatStreamResponse struct {
 	streamChunk openai.ChatCompletionChunk
 	accumulator openai.ChatCompletionAccumulator
+	content     string
+	toolCalls   []openai.ChatCompletionMessageToolCall
 }
 
-// Ensure the streaming response implements ChatResponse interface.
-var _ ChatResponse = (*openAIChatStreamResponse)(nil)
+// Update Candidates() to use accumulated content
+func (r *openAIChatStreamResponse) Candidates() []Candidate {
+	if len(r.streamChunk.Choices) == 0 {
+		return nil
+	}
 
-// UsageMetadata returns usage metadata if available in the final chunk.
+	candidates := make([]Candidate, len(r.streamChunk.Choices))
+	for i, choice := range r.streamChunk.Choices {
+		candidates[i] = &openAIStreamCandidate{
+			streamChoice: choice,
+			content:      r.content,
+			toolCalls:    r.toolCalls,
+		}
+	}
+	return candidates
+}
+
+// Update openAIStreamCandidate to handle delta content
+type openAIStreamCandidate struct {
+	streamChoice openai.ChatCompletionChunkChoice
+	content      string // This will now be just the delta content
+	toolCalls    []openai.ChatCompletionMessageToolCall
+}
+
+// Update Parts() to handle delta content
+func (c *openAIStreamCandidate) Parts() []Part {
+	var parts []Part
+
+	// Only include the delta content
+	if c.content != "" {
+		parts = append(parts, &openAIStreamPart{
+			content: c.content,
+		})
+	}
+
+	// Include accumulated tool calls
+	if len(c.toolCalls) > 0 {
+		parts = append(parts, &openAIStreamPart{
+			toolCalls: c.toolCalls,
+		})
+	}
+
+	return parts
+}
+
+// Add UsageMetadata implementation
 func (r *openAIChatStreamResponse) UsageMetadata() any {
 	if r.accumulator.Usage.TotalTokens > 0 {
 		return r.accumulator.Usage
@@ -517,118 +603,47 @@ func (r *openAIChatStreamResponse) UsageMetadata() any {
 	return nil
 }
 
-// Candidates returns a slice with a single streaming candidate.
-func (r *openAIChatStreamResponse) Candidates() []Candidate {
-	// Each streaming chunk gets converted to a candidate
-	if len(r.streamChunk.Choices) == 0 {
-		return nil
-	}
-
-	candidates := make([]Candidate, len(r.streamChunk.Choices))
-	for i, choice := range r.streamChunk.Choices {
-		candidates[i] = &openAIStreamCandidate{streamChoice: choice}
-	}
-	return candidates
-}
-
-// openAIStreamCandidate adapts a streaming chunk choice to the Candidate interface.
-type openAIStreamCandidate struct {
-	streamChoice openai.ChatCompletionChunkChoice
-}
-
-// Ensure the streaming candidate implements Candidate interface.
-var _ Candidate = (*openAIStreamCandidate)(nil)
-
-// String provides a string representation of the candidate.
+// Add String implementation
 func (c *openAIStreamCandidate) String() string {
-	return fmt.Sprintf("StreamingCandidate(Index: %d, FinishReason: %s)",
-		c.streamChoice.Index, c.streamChoice.FinishReason)
+	return fmt.Sprintf("StreamingCandidate(Content: %q, ToolCalls: %d)",
+		c.content, len(c.toolCalls))
 }
 
-// Parts returns the parts of this streaming chunk candidate.
-func (c *openAIStreamCandidate) Parts() []Part {
-	var parts []Part
-
-	// Include text content if present
-	if c.streamChoice.Delta.Content != "" {
-		parts = append(parts, &openAIStreamPart{
-			content: c.streamChoice.Delta.Content,
-		})
-	}
-
-	// Include tool calls if present
-	if len(c.streamChoice.Delta.ToolCalls) > 0 {
-		parts = append(parts, &openAIStreamPart{
-			toolCalls: c.streamChoice.Delta.ToolCalls,
-		})
-	}
-
-	return parts
-}
-
-// openAIStreamPart adapts streaming parts to the Part interface.
+// Define openAIStreamPart
 type openAIStreamPart struct {
 	content   string
-	toolCalls []openai.ChatCompletionChunkChoiceDeltaToolCall
+	toolCalls []openai.ChatCompletionMessageToolCall
 }
 
-// Ensure the streaming part implements Part interface.
+// Ensure openAIStreamPart implements Part interface
 var _ Part = (*openAIStreamPart)(nil)
 
-// AsText returns the text content of this part if it has any.
 func (p *openAIStreamPart) AsText() (string, bool) {
 	return p.content, p.content != ""
 }
 
-// AsFunctionCalls returns the function calls from this part if it has any.
 func (p *openAIStreamPart) AsFunctionCalls() ([]FunctionCall, bool) {
 	if len(p.toolCalls) == 0 {
 		return nil, false
 	}
 
-	// Count valid function calls first
-	validCount := 0
+	calls := make([]FunctionCall, 0, len(p.toolCalls))
 	for _, tc := range p.toolCalls {
-		// Only count tool calls that have a function name
-		if tc.Function.Name != "" {
-			validCount++
-		}
-	}
-
-	// If no valid function calls, return nil
-	if validCount == 0 {
-		return nil, false
-	}
-
-	// Create properly sized array
-	completeCalls := make([]FunctionCall, 0, validCount)
-
-	// Process tool calls
-	for _, tc := range p.toolCalls {
-		// Skip tool calls that don't have a complete function definition yet
-		if tc.Function.Name == "" {
-			continue
-		}
-
 		var args map[string]any
-		// Attempt to unmarshal arguments if present
 		if tc.Function.Arguments != "" {
 			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-				klog.V(2).Infof("Error unmarshaling function arguments: %v", err)
-				// Continue with empty args if unmarshal fails
+				klog.V(2).Infof("Error unmarshalling function arguments: %v", err)
 				args = make(map[string]any)
 			}
 		} else {
-			// Initialize empty args map if no arguments provided
 			args = make(map[string]any)
 		}
 
-		completeCalls = append(completeCalls, FunctionCall{
+		calls = append(calls, FunctionCall{
 			ID:        tc.ID,
 			Name:      tc.Function.Name,
 			Arguments: args,
 		})
 	}
-
-	return completeCalls, len(completeCalls) > 0
+	return calls, true
 }
