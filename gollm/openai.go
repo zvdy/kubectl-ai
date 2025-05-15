@@ -411,21 +411,21 @@ func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any)
 				})
 			}
 
-			// Only process new content from the current chunk
+			// Create a streaming response with proper nil checks
+			streamResponse := &openAIChatStreamResponse{
+				streamChunk: chunk,
+				accumulator: acc,
+				content:     "", // Default to empty content
+				toolCalls:   currentToolCalls,
+			}
+
+			// Only process content if there are choices and a delta
 			if len(chunk.Choices) > 0 {
 				delta := chunk.Choices[0].Delta
 				if delta.Content != "" {
 					currentContent.WriteString(delta.Content)
+					streamResponse.content = delta.Content // Only set content if there's new content
 				}
-			}
-
-			// Create a streaming response with only the new content
-			streamResponse := &openAIChatStreamResponse{
-				streamChunk: chunk,
-				accumulator: acc,
-				// Only include the new content from this chunk
-				content:   chunk.Choices[0].Delta.Content,
-				toolCalls: currentToolCalls,
 			}
 
 			// Keep track of the last response for history
@@ -436,9 +436,11 @@ func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any)
 				toolCalls:   currentToolCalls,
 			}
 
-			// Yield the streaming response with just the new content
-			if !yield(streamResponse, nil) {
-				return
+			// Only yield if there's actual content or tool calls to report
+			if streamResponse.content != "" || len(streamResponse.toolCalls) > 0 {
+				if !yield(streamResponse, nil) {
+					return
+				}
 			}
 		}
 
