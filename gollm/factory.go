@@ -317,7 +317,6 @@ func (rc *retryChat[C]) Send(ctx context.Context, contents ...any) (ChatResponse
 
 // Embed implements the Client interface for the retryClient decorator.
 func (rc *retryChat[C]) SendStreaming(ctx context.Context, contents ...any) (ChatResponseIterator, error) {
-	// TODO: Retry logic
 	return rc.underlying.SendStreaming(ctx, contents...)
 }
 
