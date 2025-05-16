@@ -28,6 +28,7 @@ on:
         default: "Manual run via UI"
 jobs:
   run-eval:
+    if: github.repository == 'GoogleCloudPlatform/kubectl-ai'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Add "id-token" with the intended permissions.
