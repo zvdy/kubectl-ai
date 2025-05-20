@@ -25,9 +25,9 @@ builds:
     main: ./cmd
     ldflags:
       - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
+      - -X github.com/GoogleCloudPlatform/kubectl-ai/cmd.version={{.Version}}
+      - -X github.com/GoogleCloudPlatform/kubectl-ai/cmd.commit={{.Commit}}
+      - -X github.com/GoogleCloudPlatform/kubectl-ai/cmd.date={{.Date}}
 
 archives:
   - formats: [tar.gz]
