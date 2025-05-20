@@ -1,4 +1,4 @@
-module github.com/GoogleCloudPlatform/kubectl-ai
+module github.com/zvdy/kubectl-ai
 
 go 1.24.0
 
@@ -8,6 +8,7 @@ toolchain go1.24.3
 replace github.com/GoogleCloudPlatform/kubectl-ai/gollm => ./gollm
 
 require (
+	github.com/GoogleCloudPlatform/kubectl-ai v0.0.9
 	github.com/GoogleCloudPlatform/kubectl-ai/gollm v0.0.0-00010101000000-000000000000
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/chzyer/readline v1.5.1
