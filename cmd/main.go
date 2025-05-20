@@ -59,6 +59,15 @@ func BuildRootCommand(opt *Options) (*cobra.Command, error) {
 		},
 	}
 
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "Print the version number of kubectl-ai",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("version: %s\ncommit: %s\ndate: %s\n", version, commit, date)
+			os.Exit(0)
+		},
+	})
+
 	if err := opt.bindCLIFlags(rootCmd.Flags()); err != nil {
 		return nil, err
 	}
@@ -481,7 +490,7 @@ func (s *session) repl(ctx context.Context, initialQuery string) error {
 		case query == "clear":
 			s.ui.ClearScreen()
 		case query == "exit" || query == "quit":
-			// s.ui.RenderOutput(ctx, "Allright...bye.\n")
+			// s.ui.RenderOutput(ctx, "Alright...bye.\n")
 			return nil
 		default:
 			if err := s.answerQuery(ctx, query); err != nil {
