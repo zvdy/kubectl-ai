@@ -260,8 +260,11 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 					a.SkipPermissions = true
 				case "3":
 					a.doc.AddBlock(ui.NewAgentTextBlock().WithText("Operation was skipped."))
-					observation := fmt.Sprintf("User didn't approve running %q.\n", call.Name)
-					currChatContent = append(currChatContent, observation)
+					currChatContent = append(currChatContent, gollm.FunctionCallResult{
+						ID:     call.ID,
+						Name:   call.Name,
+						Result: map[string]any{"error": "User declined to run this operation."},
+					})
 					continue
 				default:
 					// This case should technically not be reachable due to AskForConfirmation loop
