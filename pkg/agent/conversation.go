@@ -321,42 +321,6 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 	return fmt.Errorf("max iterations reached")
 }
 
-// hashArgs creates a simple hash string for the arguments map (order-insensitive, stable)
-func hashArgs(args map[string]any) string {
-	if len(args) == 0 {
-		return ""
-	}
-	var keys []string
-	for k := range args {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var sb strings.Builder
-	for _, k := range keys {
-		v := args[k]
-		// Only hash simple types for now
-		sb.WriteString(k)
-		sb.WriteString(":")
-		sb.WriteString(fmt.Sprintf("%v", v))
-		sb.WriteString(";")
-	}
-	return sb.String()
-}
-
-// toResult converts an arbitrary result to a map[string]any
-func toResult(v any) (map[string]any, error) {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return nil, fmt.Errorf("converting result to json: %w", err)
-	}
-
-	m := make(map[string]any)
-	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, fmt.Errorf("converting json result to map: %w", err)
-	}
-	return m, nil
-}
-
 // generateFromTemplate generates a prompt for LLM. It uses the prompt from the provides template file or default.
 func (a *Conversation) generatePrompt(_ context.Context, defaultPromptTemplate string, data PromptData) (string, error) {
 	promptTemplate := defaultPromptTemplate
