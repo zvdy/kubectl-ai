@@ -260,7 +260,16 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 					a.SkipPermissions = true
 				case "3":
 					a.doc.AddBlock(ui.NewAgentTextBlock().WithText("Operation was skipped. User declined to run this operation."))
-					return nil // End the round, wait for new user input
+					currChatContent = append(currChatContent, gollm.FunctionCallResult{
+						ID:   call.ID,
+						Name: call.Name,
+						Result: map[string]any{
+							"error":     "User declined to run this operation.",
+							"status":    "declined",
+							"retryable": false,
+						},
+					})
+					continue
 				default:
 					// This case should technically not be reachable due to AskForConfirmation loop
 					err := fmt.Errorf("invalid confirmation choice: %q", selectedChoice)
@@ -310,6 +319,28 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 	errorBlock := ui.NewErrorBlock().SetText(fmt.Sprintf("Sorry, couldn't complete the task after %d iterations.\n", maxIterations))
 	a.doc.AddBlock(errorBlock)
 	return fmt.Errorf("max iterations reached")
+}
+
+// hashArgs creates a simple hash string for the arguments map (order-insensitive, stable)
+func hashArgs(args map[string]any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	var keys []string
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var sb strings.Builder
+	for _, k := range keys {
+		v := args[k]
+		// Only hash simple types for now
+		sb.WriteString(k)
+		sb.WriteString(":")
+		sb.WriteString(fmt.Sprintf("%v", v))
+		sb.WriteString(";")
+	}
+	return sb.String()
 }
 
 // toResult converts an arbitrary result to a map[string]any
