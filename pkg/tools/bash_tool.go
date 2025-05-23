@@ -15,13 +15,16 @@
 package tools
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
 	"k8s.io/klog/v2"
@@ -127,13 +130,97 @@ func (t *BashTool) Run(ctx context.Context, args map[string]any) (any, error) {
 }
 
 type ExecResult struct {
-	Error    string `json:"error,omitempty"`
-	Stdout   string `json:"stdout,omitempty"`
-	Stderr   string `json:"stderr,omitempty"`
-	ExitCode int    `json:"exit_code,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Stdout     string `json:"stdout,omitempty"`
+	Stderr     string `json:"stderr,omitempty"`
+	ExitCode   int    `json:"exit_code,omitempty"`
+	StreamType string `json:"stream_type,omitempty"`
 }
 
 func executeCommand(cmd *exec.Cmd) (*ExecResult, error) {
+	command := strings.Join(cmd.Args, " ")
+	isWatch := strings.Contains(command, "kubectl get") && strings.Contains(command, "-w")
+	isLogs := strings.Contains(command, "kubectl logs") && strings.Contains(command, "-f")
+	isExec := strings.Contains(command, "kubectl exec") && strings.Contains(command, "-it")
+	isAttach := strings.Contains(command, "kubectl attach")
+	isPortForward := strings.Contains(command, "kubectl port-forward")
+
+	// Block interactive commands
+	if isExec || isPortForward {
+		return &ExecResult{Error: "interactive mode not supported for kubectl, please use non-interactive commands"}, nil
+	}
+
+	// Handle streaming commands
+	if isWatch || isLogs || isAttach {
+		// Create a context with timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
+		defer cancel()
+
+		// Create pipes for stdout and stderr
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			return nil, fmt.Errorf("creating stdout pipe: %w", err)
+		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			return nil, fmt.Errorf("creating stderr pipe: %w", err)
+		}
+
+		if err := cmd.Start(); err != nil {
+			return nil, fmt.Errorf("starting command: %w", err)
+		}
+
+		// Read output in goroutines
+		var stdoutBuilder, stderrBuilder strings.Builder
+		stdoutDone := make(chan struct{})
+		stderrDone := make(chan struct{})
+
+		go func() {
+			scanner := bufio.NewScanner(stdout)
+			for scanner.Scan() {
+				fmt.Println(scanner.Text())
+				stdoutBuilder.WriteString(scanner.Text() + "\n")
+			}
+			close(stdoutDone)
+		}()
+
+		go func() {
+			scanner := bufio.NewScanner(stderr)
+			for scanner.Scan() {
+				fmt.Fprintln(os.Stderr, scanner.Text())
+				stderrBuilder.WriteString(scanner.Text() + "\n")
+			}
+			close(stderrDone)
+		}()
+
+		// Wait for either timeout or command completion
+		select {
+		case <-ctx.Done():
+			fmt.Println("\nTimeout reached after 7 seconds")
+		case <-stdoutDone:
+			<-stderrDone // Wait for stderr to finish too
+		}
+
+		// Ensure the command is terminated
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+			cmd.Wait()
+		}
+
+		results := &ExecResult{
+			Stdout: stdoutBuilder.String(),
+			Stderr: stderrBuilder.String(),
+		}
+		if isWatch {
+			results.StreamType = "watch"
+		} else if isLogs {
+			results.StreamType = "logs"
+		} else if isAttach {
+			results.StreamType = "attach"
+		}
+		return results, nil
+	}
+
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	var stderr bytes.Buffer
