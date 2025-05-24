@@ -233,17 +233,27 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 			// Check if the command is interactive using the tool's implementation
 			isInteractive, errMsg := toolCall.GetTool().IsInteractive(call.Arguments)
 			klog.Infof("isInteractive: %t, errMsg: %s", isInteractive, errMsg)
-			// If interactive, show error and skip to next iteration
-			if isInteractive {
-				// Use ErrorBlock for interactive command errors
-				errorBlock := ui.NewErrorBlock().SetText(fmt.Sprintf("  %s\n", errMsg))
-				a.doc.AddBlock(errorBlock)
 
-				currChatContent = append(currChatContent, gollm.FunctionCallResult{
-					ID:     call.ID,
-					Name:   call.Name,
-					Result: map[string]any{"error": errMsg},
-				})
+			// If interactive, handle based on whether we're using tool-use shim
+			if isInteractive {
+				if a.EnableToolUseShim {
+					// For models without tool-use support, append as text response
+					if agentTextBlock == nil {
+						agentTextBlock = ui.NewAgentTextBlock()
+						a.doc.AddBlock(agentTextBlock)
+					}
+					agentTextBlock.AppendText(fmt.Sprintf("  %s\n", errMsg))
+				} else {
+					// For models with tool-use support, use proper FunctionCallResult
+					errorBlock := ui.NewErrorBlock().SetText(fmt.Sprintf("  %s\n", errMsg))
+					a.doc.AddBlock(errorBlock)
+
+					currChatContent = append(currChatContent, gollm.FunctionCallResult{
+						ID:     call.ID,
+						Name:   call.Name,
+						Result: map[string]any{"error": errMsg},
+					})
+				}
 				continue
 			}
 
