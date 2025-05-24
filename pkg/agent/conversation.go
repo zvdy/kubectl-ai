@@ -285,11 +285,17 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 				case "2":
 					a.SkipPermissions = true
 				case "3":
-					a.doc.AddBlock(ui.NewAgentTextBlock().WithText("Operation was skipped."))
-					observation := fmt.Sprintf("User didn't approve running %q.\n", call.Name)
-					// Add the observation back to the chat content
-					currChatContent = append(currChatContent, observation)
-					continue // Skip execution and move to the next function call
+					a.doc.AddBlock(ui.NewAgentTextBlock().WithText("Operation was skipped. User declined to run this operation."))
+					currChatContent = append(currChatContent, gollm.FunctionCallResult{
+						ID:   call.ID,
+						Name: call.Name,
+						Result: map[string]any{
+							"error":     "User declined to run this operation.",
+							"status":    "declined",
+							"retryable": false,
+						},
+					})
+					continue
 				default:
 					// This case should technically not be reachable due to AskForConfirmation loop
 					err := fmt.Errorf("invalid confirmation choice: %q", selectedChoice)
@@ -347,20 +353,6 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 	errorBlock := ui.NewErrorBlock().SetText(fmt.Sprintf("Sorry, couldn't complete the task after %d iterations.\n", maxIterations))
 	a.doc.AddBlock(errorBlock)
 	return fmt.Errorf("max iterations reached")
-}
-
-// toResult converts an arbitrary result to a map[string]any
-func toResult(v any) (map[string]any, error) {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return nil, fmt.Errorf("converting result to json: %w", err)
-	}
-
-	m := make(map[string]any)
-	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, fmt.Errorf("converting json result to map: %w", err)
-	}
-	return m, nil
 }
 
 // generateFromTemplate generates a prompt for LLM. It uses the prompt from the provides template file or default.
