@@ -209,12 +209,10 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 					agentTextBlock.AppendText(text)
 				}
 
-				// Only process function calls if not using tool-use shim
-				if !a.EnableToolUseShim {
-					if calls, ok := part.AsFunctionCalls(); ok && len(calls) > 0 {
-						log.Info("function calls", "calls", calls)
-						functionCalls = append(functionCalls, calls...)
-					}
+				// Check if it's a function call
+				if calls, ok := part.AsFunctionCalls(); ok && len(calls) > 0 {
+					log.Info("function calls", "calls", calls)
+					functionCalls = append(functionCalls, calls...)
 				}
 			}
 		}
@@ -223,115 +221,115 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 			agentTextBlock.SetStreaming(false)
 		}
 
-		// Only process function calls if not using tool-use shim
-		if !a.EnableToolUseShim {
-			// TODO(droot): Run all function calls in parallel
-			for _, call := range functionCalls {
-				toolCall, err := a.Tools.ParseToolInvocation(ctx, call.Name, call.Arguments)
-				if err != nil {
-					return fmt.Errorf("building tool call: %w", err)
-				}
+		// TODO(droot): Run all function calls in parallel
+		for _, call := range functionCalls {
+			toolCall, err := a.Tools.ParseToolInvocation(ctx, call.Name, call.Arguments)
+			if err != nil {
+				return fmt.Errorf("building tool call: %w", err)
+			}
 
-				// Check if the command is interactive using the tool's implementation
-				isInteractive, errMsg := toolCall.GetTool().IsInteractive(call.Arguments)
-				klog.Infof("isInteractive: %t, errMsg: %s", isInteractive, errMsg)
+			// Check if the command is interactive using the tool's implementation
+			isInteractive, errMsg := toolCall.GetTool().IsInteractive(call.Arguments)
+			klog.Infof("isInteractive: %t, errMsg: %s", isInteractive, errMsg)
 
-				// If interactive, handle based on whether we're using tool-use shim
-				if isInteractive {
-					if a.EnableToolUseShim {
-						// For models without tool-use support, append as text response
-						if agentTextBlock == nil {
-							agentTextBlock = ui.NewAgentTextBlock()
-							a.doc.AddBlock(agentTextBlock)
-						}
-						agentTextBlock.AppendText(fmt.Sprintf("  %s\n", errMsg))
-					} else {
-						// For models with tool-use support, use proper FunctionCallResult
-						errorBlock := ui.NewErrorBlock().SetText(fmt.Sprintf("  %s\n", errMsg))
-						a.doc.AddBlock(errorBlock)
-
-						currChatContent = append(currChatContent, gollm.FunctionCallResult{
-							ID:     call.ID,
-							Name:   call.Name,
-							Result: map[string]any{"error": errMsg},
-						})
+			// If interactive, handle based on whether we're using tool-use shim
+			if isInteractive {
+				if a.EnableToolUseShim {
+					// For models without tool-use support (shim enabled), append as text response
+					if agentTextBlock == nil {
+						agentTextBlock = ui.NewAgentTextBlock()
+						a.doc.AddBlock(agentTextBlock)
 					}
-					continue
+					agentTextBlock.AppendText(fmt.Sprintf("  %s\n", errMsg))
+				} else {
+					// For models with tool-use support (shim disabled), use proper FunctionCallResult
+					errorBlock := ui.NewErrorBlock().SetText(fmt.Sprintf("  %s\n", errMsg))
+					a.doc.AddBlock(errorBlock)
+
+					// Note: This assumes the model supports sending FunctionCallResult
+					currChatContent = append(currChatContent, gollm.FunctionCallResult{
+						ID:     call.ID,
+						Name:   call.Name,
+						Result: map[string]any{"error": errMsg},
+					})
 				}
+				continue // Skip execution for interactive commands
+			}
 
-				// Only show "Running" message and proceed with execution for non-interactive commands
-				s := toolCall.PrettyPrint()
-				a.doc.AddBlock(ui.NewFunctionCallRequestBlock().SetText(fmt.Sprintf("  Running: %s\n", s)))
+			// Only show "Running" message and proceed with execution for non-interactive commands
+			s := toolCall.PrettyPrint()
+			a.doc.AddBlock(ui.NewFunctionCallRequestBlock().SetText(fmt.Sprintf("  Running: %s\n", s)))
 
-				var result any
-				var invokeErr error
-
-				// Execute the command
-				result, invokeErr = toolCall.InvokeTool(ctx, tools.InvokeToolOptions{
-					Kubeconfig: a.Kubeconfig,
-					WorkDir:    a.workDir,
-				})
-				if invokeErr != nil {
-					return fmt.Errorf("executing action: %w", invokeErr)
-				}
-
-				// Convert result to map for the LLM
-				resultMap, err := tools.ToolResultToMap(result)
-				if err != nil {
-					return err
-				}
-
-				// Handle timeout message using UI blocks
-				if execResult, ok := result.(*tools.ExecResult); ok && execResult.StreamType == "timeout" {
-					a.doc.AddBlock(ui.NewAgentTextBlock().WithText("\nTimeout reached after 7 seconds\n"))
-				}
-
-				// Add the tool call result to maintain conversation flow
-				currChatContent = append(currChatContent, gollm.FunctionCallResult{
-					ID:     call.ID,
-					Name:   call.Name,
-					Result: resultMap,
-				})
-
-				// Only ask for confirmation if SkipPermissions is false and command modifies a resource
-				if !a.SkipPermissions && call.Arguments["modifies_resource"] != "no" {
-					confirmationPrompt := `  Do you want to proceed ?
+			// Ask for confirmation only if SkipPermissions is false AND the tool modifies resources.
+			if !a.SkipPermissions && call.Arguments["modifies_resource"] != "no" {
+				confirmationPrompt := `  Do you want to proceed ?
   1) Yes
   2) Yes, and don't ask me again
   3) No`
 
-					optionsBlock := ui.NewInputOptionBlock().SetPrompt(confirmationPrompt)
-					optionsBlock.SetOptions([]string{"1", "2", "3"})
-					a.doc.AddBlock(optionsBlock)
+				optionsBlock := ui.NewInputOptionBlock().SetPrompt(confirmationPrompt)
+				optionsBlock.SetOptions([]string{"1", "2", "3"})
+				a.doc.AddBlock(optionsBlock)
 
-					selectedChoice, err := optionsBlock.Observable().Wait()
-					if err != nil {
-						if err == io.EOF {
-							// Use hit control-D, or was piping and we reached the end of stdin.
-							// Not a "big" problem
-							return nil
-						}
-						return fmt.Errorf("reading input: %w", err)
+				selectedChoice, err := optionsBlock.Observable().Wait()
+				if err != nil {
+					if err == io.EOF {
+						return nil
 					}
-
-					switch selectedChoice {
-					case "1":
-						// Proceed with the operation
-					case "2":
-						a.SkipPermissions = true
-					case "3":
-						a.doc.AddBlock(ui.NewAgentTextBlock().WithText("Operation was skipped."))
-						observation := fmt.Sprintf("User didn't approve running %q.\n", call.Name)
-						currChatContent = append(currChatContent, observation)
-						continue
-					default:
-						// This case should technically not be reachable due to AskForConfirmation loop
-						err := fmt.Errorf("invalid confirmation choice: %q", selectedChoice)
-						log.Error(err, "Invalid choice received from AskForConfirmation")
-						a.doc.AddBlock(ui.NewErrorBlock().SetText("Invalid choice received. Cancelling operation."))
-						return err
-					}
+					return fmt.Errorf("reading input: %w", err)
 				}
+
+				switch selectedChoice {
+				case "1":
+					// Proceed with the operation
+				case "2":
+					a.SkipPermissions = true
+				case "3":
+					a.doc.AddBlock(ui.NewAgentTextBlock().WithText("Operation was skipped."))
+					observation := fmt.Sprintf("User didn't approve running %q.\n", call.Name)
+					// Add the observation back to the chat content
+					currChatContent = append(currChatContent, observation)
+					continue // Skip execution and move to the next function call
+				default:
+					// This case should technically not be reachable due to AskForConfirmation loop
+					err := fmt.Errorf("invalid confirmation choice: %q", selectedChoice)
+					log.Error(err, "Invalid choice received from AskForConfirmation")
+					a.doc.AddBlock(ui.NewErrorBlock().SetText("Invalid choice received. Cancelling operation."))
+					return err
+				}
+			}
+
+			ctx := journal.ContextWithRecorder(ctx, a.Recorder)
+			output, err := toolCall.InvokeTool(ctx, tools.InvokeToolOptions{
+				Kubeconfig: a.Kubeconfig,
+				WorkDir:    a.workDir,
+			})
+			if err != nil {
+				return fmt.Errorf("executing action: %w", err)
+			}
+
+			// Handle timeout message using UI blocks
+			if execResult, ok := output.(*tools.ExecResult); ok && execResult.StreamType == "timeout" {
+				a.doc.AddBlock(ui.NewAgentTextBlock().WithText("\nTimeout reached after 7 seconds\n"))
+			}
+
+			// Add the tool call result to maintain conversation flow
+			if a.EnableToolUseShim {
+				// If shim is enabled, format the result as a text observation
+				observation := fmt.Sprintf("Result of running %q:\n%s", call.Name, output)
+				currChatContent = append(currChatContent, observation)
+			} else {
+				// If shim is disabled, convert the result to a map and append FunctionCallResult
+				result, err := tools.ToolResultToMap(output)
+				if err != nil {
+					return err
+				}
+
+				currChatContent = append(currChatContent, gollm.FunctionCallResult{
+					ID:     call.ID,
+					Name:   call.Name,
+					Result: result,
+				})
 			}
 		}
 
