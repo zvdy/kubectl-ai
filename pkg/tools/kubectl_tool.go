@@ -38,11 +38,11 @@ func (t *Kubectl) Description() string {
 
 IMPORTANT: Interactive commands are not supported in this environment. This includes:
 - kubectl exec with -it flag (use non-interactive exec instead)
-- kubectl edit (use kubectl get -o yaml and kubectl apply instead)
+- kubectl edit (use kubectl get -o yaml, kubectl patch, or kubectl apply instead)
 - kubectl port-forward (use alternative methods like NodePort or LoadBalancer)
 
 For interactive operations, please use these non-interactive alternatives:
-- Instead of 'kubectl edit', use 'kubectl get -o yaml' to view and 'kubectl apply' to apply changes
+- Instead of 'kubectl edit', use 'kubectl get -o yaml' to view, 'kubectl patch' for targeted changes, or 'kubectl apply' to apply full changes
 - Instead of 'kubectl exec -it', use 'kubectl exec' with a specific command
 - Instead of 'kubectl port-forward', use service types like NodePort or LoadBalancer`
 }
@@ -59,7 +59,7 @@ func (t *Kubectl) FunctionDefinition() *gollm.FunctionDefinition {
 					Description: `The complete kubectl command to execute. Prefer to use heredoc syntax for multi-line commands. Please include the kubectl prefix as well.
 
 IMPORTANT: Do not use interactive commands. Instead:
-- Use 'kubectl get -o yaml' and 'kubectl apply' instead of 'kubectl edit'
+- Use 'kubectl get -o yaml', 'kubectl patch', or 'kubectl apply' instead of 'kubectl edit'
 - Use 'kubectl exec' with specific commands instead of 'kubectl exec -it'
 - Use service types like NodePort or LoadBalancer instead of 'kubectl port-forward'
 
@@ -71,7 +71,11 @@ user: what is the status of the pod my-pod?
 assistant: kubectl get pod my-pod -o jsonpath='{.status.phase}'
 
 user: I need to edit the pod configuration
-assistant: kubectl get pod my-pod -o yaml > pod.yaml
+assistant: # Option 1: Using patch for targeted changes
+kubectl patch pod my-pod --patch '{"spec":{"containers":[{"name":"main","image":"new-image"}]}}'
+
+# Option 2: Using get and apply for full changes
+kubectl get pod my-pod -o yaml > pod.yaml
 # Edit pod.yaml locally
 kubectl apply -f pod.yaml
 
