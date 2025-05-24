@@ -241,7 +241,10 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 
 			// If interactive, show error and skip to next iteration
 			if isInteractive {
-				a.doc.AddBlock(ui.NewAgentTextBlock().WithText(fmt.Sprintf("  %s\n", errMsg)))
+				// Use ErrorBlock for interactive command errors
+				errorBlock := ui.NewErrorBlock().SetText(fmt.Sprintf("  %s\n", errMsg))
+				a.doc.AddBlock(errorBlock)
+
 				currChatContent = append(currChatContent, gollm.FunctionCallResult{
 					ID:     call.ID,
 					Name:   call.Name,
@@ -270,6 +273,11 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 			resultMap, err := tools.ToolResultToMap(result)
 			if err != nil {
 				return err
+			}
+
+			// Handle timeout message using UI blocks
+			if execResult, ok := result.(*tools.ExecResult); ok && execResult.StreamType == "timeout" {
+				a.doc.AddBlock(ui.NewAgentTextBlock().WithText("\nTimeout reached after 7 seconds\n"))
 			}
 
 			// Add the tool call result to maintain conversation flow

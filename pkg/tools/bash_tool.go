@@ -183,12 +183,18 @@ func executeCommand(cmd *exec.Cmd) (*ExecResult, error) {
 		var stdoutBuilder, stderrBuilder strings.Builder
 		stdoutDone := make(chan struct{})
 		stderrDone := make(chan struct{})
+		isTimeout := false
 
 		go func() {
 			scanner := bufio.NewScanner(stdout)
 			for scanner.Scan() {
-				fmt.Println(scanner.Text())
-				stdoutBuilder.WriteString(scanner.Text() + "\n")
+				if isTimeout {
+					// Stop reading if timeout occurred
+					return
+				}
+				line := scanner.Text() + "\n"
+				fmt.Print(line)
+				stdoutBuilder.WriteString(line)
 			}
 			close(stdoutDone)
 		}()
@@ -196,8 +202,13 @@ func executeCommand(cmd *exec.Cmd) (*ExecResult, error) {
 		go func() {
 			scanner := bufio.NewScanner(stderr)
 			for scanner.Scan() {
-				fmt.Fprintln(os.Stderr, scanner.Text())
-				stderrBuilder.WriteString(scanner.Text() + "\n")
+				if isTimeout {
+					// Stop reading if timeout occurred
+					return
+				}
+				line := scanner.Text() + "\n"
+				fmt.Fprint(os.Stderr, line)
+				stderrBuilder.WriteString(line)
 			}
 			close(stderrDone)
 		}()
@@ -205,7 +216,19 @@ func executeCommand(cmd *exec.Cmd) (*ExecResult, error) {
 		// Wait for either timeout or command completion
 		select {
 		case <-ctx.Done():
-			fmt.Println("\nTimeout reached after 7 seconds")
+			isTimeout = true
+			// Kill the process immediately on timeout
+			if cmd.Process != nil {
+				cmd.Process.Kill()
+				cmd.Wait()
+			}
+			// Return timeout message to be displayed via UI
+			return &ExecResult{
+				Error:      "Timeout reached after 7 seconds",
+				Stdout:     stdoutBuilder.String(),
+				Stderr:     stderrBuilder.String(),
+				StreamType: "timeout",
+			}, nil
 		case <-stdoutDone:
 			<-stderrDone // Wait for stderr to finish too
 		}
