@@ -88,6 +88,11 @@ func (t *Kubectl) Run(ctx context.Context, args map[string]any) (any, error) {
 }
 
 func runKubectlCommand(ctx context.Context, command, workDir, kubeconfig string) (*ExecResult, error) {
+	// Check for interactive commands before proceeding
+	if isInteractive, errMsg := IsInteractiveCommand(command); isInteractive {
+		return &ExecResult{Error: errMsg}, nil
+	}
+
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		cmd = exec.CommandContext(ctx, os.Getenv("COMSPEC"), "/c", command)

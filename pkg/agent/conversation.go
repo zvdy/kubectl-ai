@@ -230,9 +230,56 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 				return fmt.Errorf("building tool call: %w", err)
 			}
 
+			// Check if this is a kubectl or bash command that might be interactive
+			isInteractive := false
+			var errMsg string
+			if call.Name == "kubectl" || call.Name == "bash" {
+				if command, ok := call.Arguments["command"].(string); ok {
+					isInteractive, errMsg = tools.IsInteractiveCommand(command)
+				}
+			}
+
+			// If interactive, show error and skip to next iteration
+			if isInteractive {
+				a.doc.AddBlock(ui.NewAgentTextBlock().WithText(fmt.Sprintf("  %s\n", errMsg)))
+				currChatContent = append(currChatContent, gollm.FunctionCallResult{
+					ID:     call.ID,
+					Name:   call.Name,
+					Result: map[string]any{"error": errMsg},
+				})
+				continue
+			}
+
+			// Only show "Running" message and proceed with execution for non-interactive commands
 			s := toolCall.PrettyPrint()
 			a.doc.AddBlock(ui.NewFunctionCallRequestBlock().SetText(fmt.Sprintf("  Running: %s\n", s)))
-			// Ask for confirmation only if SkipPermissions is false AND the tool modifies resources.
+
+			var result any
+			var invokeErr error
+
+			// Execute the command
+			result, invokeErr = toolCall.InvokeTool(ctx, tools.InvokeToolOptions{
+				Kubeconfig: a.Kubeconfig,
+				WorkDir:    a.workDir,
+			})
+			if invokeErr != nil {
+				return fmt.Errorf("executing action: %w", invokeErr)
+			}
+
+			// Convert result to map for the LLM
+			resultMap, err := tools.ToolResultToMap(result)
+			if err != nil {
+				return err
+			}
+
+			// Add the tool call result to maintain conversation flow
+			currChatContent = append(currChatContent, gollm.FunctionCallResult{
+				ID:     call.ID,
+				Name:   call.Name,
+				Result: resultMap,
+			})
+
+			// Only ask for confirmation if SkipPermissions is false and command modifies a resource
 			if !a.SkipPermissions && call.Arguments["modifies_resource"] != "no" {
 				confirmationPrompt := `  Do you want to proceed ?
   1) Yes
@@ -270,31 +317,6 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 					a.doc.AddBlock(ui.NewErrorBlock().SetText("Invalid choice received. Cancelling operation."))
 					return err
 				}
-			}
-
-			ctx := journal.ContextWithRecorder(ctx, a.Recorder)
-			output, err := toolCall.InvokeTool(ctx, tools.InvokeToolOptions{
-				Kubeconfig: a.Kubeconfig,
-				WorkDir:    a.workDir,
-			})
-			if err != nil {
-				return fmt.Errorf("executing action: %w", err)
-			}
-
-			if a.EnableToolUseShim {
-				observation := fmt.Sprintf("Result of running %q:\n%s", call.Name, output)
-				currChatContent = append(currChatContent, observation)
-			} else {
-				result, err := tools.ToolResultToMap(output)
-				if err != nil {
-					return err
-				}
-
-				currChatContent = append(currChatContent, gollm.FunctionCallResult{
-					ID:     call.ID,
-					Name:   call.Name,
-					Result: result,
-				})
 			}
 		}
 
