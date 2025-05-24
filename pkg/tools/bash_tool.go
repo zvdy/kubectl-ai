@@ -137,11 +137,20 @@ type ExecResult struct {
 	StreamType string `json:"stream_type,omitempty"`
 }
 
-// isInteractiveCommand checks if a command is interactive and should be blocked
 func IsInteractiveCommand(command string) (bool, string) {
-	isExec := strings.Contains(command, "kubectl exec") && strings.Contains(command, "-it")
-	isPortForward := strings.Contains(command, "kubectl port-forward")
-	isEdit := strings.Contains(command, "kubectl edit")
+	// Inline isKubectlCommand logic
+	words := strings.Fields(command)
+	if len(words) == 0 {
+		return false, ""
+	}
+	base := filepath.Base(words[0])
+	if base != "kubectl" {
+		return false, ""
+	}
+
+	isExec := strings.Contains(command, " exec ") && strings.Contains(command, " -it")
+	isPortForward := strings.Contains(command, " port-forward ")
+	isEdit := strings.Contains(command, " edit ")
 
 	if isExec || isPortForward || isEdit {
 		return true, "interactive mode not supported for kubectl, please use non-interactive commands"
@@ -151,13 +160,14 @@ func IsInteractiveCommand(command string) (bool, string) {
 
 func executeCommand(cmd *exec.Cmd) (*ExecResult, error) {
 	command := strings.Join(cmd.Args, " ")
-	isWatch := strings.Contains(command, "kubectl get") && strings.Contains(command, "-w")
-	isLogs := strings.Contains(command, "kubectl logs") && strings.Contains(command, "-f")
-	isAttach := strings.Contains(command, "kubectl attach")
 
 	if isInteractive, errMsg := IsInteractiveCommand(command); isInteractive {
 		return &ExecResult{Error: errMsg}, nil
 	}
+
+	isWatch := strings.Contains(command, " get ") && strings.Contains(command, " -w")
+	isLogs := strings.Contains(command, " logs ") && strings.Contains(command, " -f")
+	isAttach := strings.Contains(command, " attach ")
 
 	// Handle streaming commands
 	if isWatch || isLogs || isAttach {
