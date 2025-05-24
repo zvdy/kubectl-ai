@@ -37,5 +37,6 @@ type Tool interface {
 	Run(ctx context.Context, args map[string]any) (any, error)
 
 	// IsInteractive checks if a command is interactive
+	// If the command is interactive, we need to handle it differently in the agent
 	IsInteractive(args map[string]any) (bool, string)
 }
