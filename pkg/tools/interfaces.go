@@ -35,4 +35,7 @@ type Tool interface {
 
 	// Run invokes the tool, the agent calls this when the LLM requests tool invocation.
 	Run(ctx context.Context, args map[string]any) (any, error)
+
+	// IsInteractive checks if a command is interactive
+	IsInteractive(args map[string]any) (bool, string)
 }

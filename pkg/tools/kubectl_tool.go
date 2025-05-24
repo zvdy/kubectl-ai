@@ -138,3 +138,17 @@ func runKubectlCommand(ctx context.Context, command, workDir, kubeconfig string)
 
 	return executeCommand(cmd)
 }
+
+func (t *Kubectl) IsInteractive(args map[string]any) (bool, string) {
+	commandVal, ok := args["command"]
+	if !ok || commandVal == nil {
+		return false, ""
+	}
+
+	command, ok := commandVal.(string)
+	if !ok {
+		return false, ""
+	}
+
+	return IsInteractiveCommand(command)
+}

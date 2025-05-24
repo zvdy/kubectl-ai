@@ -230,15 +230,9 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 				return fmt.Errorf("building tool call: %w", err)
 			}
 
-			// Check if this is a kubectl or bash command that might be interactive
-			isInteractive := false
-			var errMsg string
-			if call.Name == "kubectl" || call.Name == "bash" {
-				if command, ok := call.Arguments["command"].(string); ok {
-					isInteractive, errMsg = tools.IsInteractiveCommand(command)
-				}
-			}
-
+			// Check if the command is interactive using the tool's implementation
+			isInteractive, errMsg := toolCall.GetTool().IsInteractive(call.Arguments)
+			klog.Infof("isInteractive: %t, errMsg: %s", isInteractive, errMsg)
 			// If interactive, show error and skip to next iteration
 			if isInteractive {
 				// Use ErrorBlock for interactive command errors

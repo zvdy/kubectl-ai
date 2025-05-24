@@ -280,3 +280,17 @@ func executeCommand(cmd *exec.Cmd) (*ExecResult, error) {
 	results.Stderr = stderr.String()
 	return results, nil
 }
+
+func (t *BashTool) IsInteractive(args map[string]any) (bool, string) {
+	commandVal, ok := args["command"]
+	if !ok || commandVal == nil {
+		return false, ""
+	}
+
+	command, ok := commandVal.(string)
+	if !ok {
+		return false, ""
+	}
+
+	return IsInteractiveCommand(command)
+}
