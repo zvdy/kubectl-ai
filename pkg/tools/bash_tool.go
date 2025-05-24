@@ -144,9 +144,10 @@ func executeCommand(cmd *exec.Cmd) (*ExecResult, error) {
 	isExec := strings.Contains(command, "kubectl exec") && strings.Contains(command, "-it")
 	isAttach := strings.Contains(command, "kubectl attach")
 	isPortForward := strings.Contains(command, "kubectl port-forward")
+	isEdit := strings.Contains(command, "kubectl edit")
 
 	// Block interactive commands
-	if isExec || isPortForward {
+	if isExec || isPortForward || isEdit {
 		return &ExecResult{Error: "interactive mode not supported for kubectl, please use non-interactive commands"}, nil
 	}
 

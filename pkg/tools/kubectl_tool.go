@@ -19,7 +19,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strings"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
 )
@@ -89,13 +88,6 @@ func (t *Kubectl) Run(ctx context.Context, args map[string]any) (any, error) {
 }
 
 func runKubectlCommand(ctx context.Context, command, workDir, kubeconfig string) (*ExecResult, error) {
-	if strings.Contains(command, "kubectl edit") {
-		return &ExecResult{Error: "interactive mode not supported for kubectl, please use non-interactive commands"}, nil
-	}
-	if strings.Contains(command, "kubectl port-forward") {
-		return &ExecResult{Error: "port-forwarding is not allowed because assistant is running in an unattended mode, please try some other alternative"}, nil
-	}
-
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		cmd = exec.CommandContext(ctx, os.Getenv("COMSPEC"), "/c", command)
