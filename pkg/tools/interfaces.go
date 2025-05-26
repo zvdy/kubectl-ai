@@ -38,5 +38,6 @@ type Tool interface {
 
 	// IsInteractive checks if a command is interactive
 	// If the command is interactive, we need to handle it differently in the agent
-	IsInteractive(args map[string]any) (bool, string)
+	// Returns true if interactive, with an error explaining why it's interactive
+	IsInteractive(args map[string]any) (bool, error)
 }

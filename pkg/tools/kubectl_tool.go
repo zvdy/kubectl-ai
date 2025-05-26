@@ -116,8 +116,8 @@ func (t *Kubectl) Run(ctx context.Context, args map[string]any) (any, error) {
 
 func runKubectlCommand(ctx context.Context, command, workDir, kubeconfig string) (*ExecResult, error) {
 	// Check for interactive commands before proceeding
-	if isInteractive, errMsg := IsInteractiveCommand(command); isInteractive {
-		return &ExecResult{Error: errMsg}, nil
+	if isInteractive, err := IsInteractiveCommand(command); isInteractive {
+		return &ExecResult{Error: err.Error()}, nil
 	}
 
 	var cmd *exec.Cmd
@@ -139,15 +139,15 @@ func runKubectlCommand(ctx context.Context, command, workDir, kubeconfig string)
 	return executeCommand(cmd)
 }
 
-func (t *Kubectl) IsInteractive(args map[string]any) (bool, string) {
+func (t *Kubectl) IsInteractive(args map[string]any) (bool, error) {
 	commandVal, ok := args["command"]
 	if !ok || commandVal == nil {
-		return false, ""
+		return false, nil
 	}
 
 	command, ok := commandVal.(string)
 	if !ok {
-		return false, ""
+		return false, nil
 	}
 
 	return IsInteractiveCommand(command)

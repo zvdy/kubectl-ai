@@ -137,15 +137,15 @@ type ExecResult struct {
 	StreamType string `json:"stream_type,omitempty"`
 }
 
-func IsInteractiveCommand(command string) (bool, string) {
+func IsInteractiveCommand(command string) (bool, error) {
 	// Inline isKubectlCommand logic
 	words := strings.Fields(command)
 	if len(words) == 0 {
-		return false, ""
+		return false, nil
 	}
 	base := filepath.Base(words[0])
 	if base != "kubectl" {
-		return false, ""
+		return false, nil
 	}
 
 	isExec := strings.Contains(command, " exec ") && strings.Contains(command, " -it")
@@ -153,16 +153,16 @@ func IsInteractiveCommand(command string) (bool, string) {
 	isEdit := strings.Contains(command, " edit ")
 
 	if isExec || isPortForward || isEdit {
-		return true, "interactive mode not supported for kubectl, please use non-interactive commands"
+		return true, fmt.Errorf("interactive mode not supported for kubectl, please use non-interactive commands")
 	}
-	return false, ""
+	return false, nil
 }
 
 func executeCommand(cmd *exec.Cmd) (*ExecResult, error) {
 	command := strings.Join(cmd.Args, " ")
 
-	if isInteractive, errMsg := IsInteractiveCommand(command); isInteractive {
-		return &ExecResult{Error: errMsg}, nil
+	if isInteractive, err := IsInteractiveCommand(command); isInteractive {
+		return &ExecResult{Error: err.Error()}, nil
 	}
 
 	isWatch := strings.Contains(command, " get ") && strings.Contains(command, " -w")
@@ -281,15 +281,15 @@ func executeCommand(cmd *exec.Cmd) (*ExecResult, error) {
 	return results, nil
 }
 
-func (t *BashTool) IsInteractive(args map[string]any) (bool, string) {
+func (t *BashTool) IsInteractive(args map[string]any) (bool, error) {
 	commandVal, ok := args["command"]
 	if !ok || commandVal == nil {
-		return false, ""
+		return false, nil
 	}
 
 	command, ok := commandVal.(string)
 	if !ok {
-		return false, ""
+		return false, nil
 	}
 
 	return IsInteractiveCommand(command)

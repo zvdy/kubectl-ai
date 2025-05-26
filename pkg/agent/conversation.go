@@ -222,6 +222,11 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 		}
 
 		// TODO(droot): Run all function calls in parallel
+		// (may have to specify in the prompt to make these function calls independent)
+		// NOTE: Currently, function calls are executed sequentially.
+		// Suggestion: Use goroutines and sync.WaitGroup to parallelize execution if tool calls are independent.
+		// Be careful with shared state and UI updates if running in parallel.
+
 		for _, call := range functionCalls {
 			toolCall, err := a.Tools.ParseToolInvocation(ctx, call.Name, call.Arguments)
 			if err != nil {
@@ -230,7 +235,7 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 
 			// Check if the command is interactive using the tool's implementation
 			isInteractive, errMsg := toolCall.GetTool().IsInteractive(call.Arguments)
-			klog.Infof("isInteractive: %t, errMsg: %s", isInteractive, errMsg)
+			klog.Infof("isInteractive: %t, errMsg: %s, CallArguments: ", isInteractive, errMsg)
 
 			// If interactive, handle based on whether we're using tool-use shim
 			if isInteractive {
