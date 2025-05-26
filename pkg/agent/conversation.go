@@ -171,7 +171,6 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 		}
 
 		// Process each part of the response
-		// only applicable is not using tooluse shim
 		var functionCalls []gollm.FunctionCall
 
 		var agentTextBlock *ui.AgentTextBlock
@@ -224,14 +223,46 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 
 		// TODO(droot): Run all function calls in parallel
 		// (may have to specify in the prompt to make these function calls independent)
+		// NOTE: Currently, function calls are executed sequentially.
+		// Suggestion: Use goroutines and sync.WaitGroup to parallelize execution if tool calls are independent.
+		// Be careful with shared state and UI updates if running in parallel.
+
 		for _, call := range functionCalls {
 			toolCall, err := a.Tools.ParseToolInvocation(ctx, call.Name, call.Arguments)
 			if err != nil {
 				return fmt.Errorf("building tool call: %w", err)
 			}
 
+			// Check if the command is interactive using the tool's implementation
+			isInteractive, err := toolCall.GetTool().IsInteractive(call.Arguments)
+			klog.Infof("isInteractive: %t, err: %v, CallArguments: %+v", isInteractive, err, call.Arguments)
+
+			// If interactive, handle based on whether we're using tool-use shim
+			if isInteractive {
+				// Show error block for both shim enabled and disabled modes
+				errorBlock := ui.NewErrorBlock().SetText(fmt.Sprintf("  %s\n", err.Error()))
+				a.doc.AddBlock(errorBlock)
+
+				if a.EnableToolUseShim {
+					// Add the error as an observation
+					observation := fmt.Sprintf("Result of running %q:\n%s", call.Name, err.Error())
+					currChatContent = append(currChatContent, observation)
+				} else {
+					// For models with tool-use support (shim disabled), use proper FunctionCallResult
+					// Note: This assumes the model supports sending FunctionCallResult
+					currChatContent = append(currChatContent, gollm.FunctionCallResult{
+						ID:     call.ID,
+						Name:   call.Name,
+						Result: map[string]any{"error": err.Error()},
+					})
+				}
+				continue // Skip execution for interactive commands
+			}
+
+			// Only show "Running" message and proceed with execution for non-interactive commands
 			s := toolCall.PrettyPrint()
 			a.doc.AddBlock(ui.NewFunctionCallRequestBlock().SetText(fmt.Sprintf("  Running: %s\n", s)))
+
 			// Ask for confirmation only if SkipPermissions is false AND the tool modifies resources.
 			if !a.SkipPermissions && call.Arguments["modifies_resource"] != "no" {
 				confirmationPrompt := `  Do you want to proceed ?
@@ -246,8 +277,6 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 				selectedChoice, err := optionsBlock.Observable().Wait()
 				if err != nil {
 					if err == io.EOF {
-						// Use hit control-D, or was piping and we reached the end of stdin.
-						// Not a "big" problem
 						return nil
 					}
 					return fmt.Errorf("reading input: %w", err)
@@ -290,10 +319,18 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 				return fmt.Errorf("executing action: %w", err)
 			}
 
+			// Handle timeout message using UI blocks
+			if execResult, ok := output.(*tools.ExecResult); ok && execResult.StreamType == "timeout" {
+				a.doc.AddBlock(ui.NewAgentTextBlock().WithText("\nTimeout reached after 7 seconds\n"))
+			}
+
+			// Add the tool call result to maintain conversation flow
 			if a.EnableToolUseShim {
+				// If shim is enabled, format the result as a text observation
 				observation := fmt.Sprintf("Result of running %q:\n%s", call.Name, output)
 				currChatContent = append(currChatContent, observation)
 			} else {
+				// If shim is disabled, convert the result to a map and append FunctionCallResult
 				result, err := tools.ToolResultToMap(output)
 				if err != nil {
 					return err
