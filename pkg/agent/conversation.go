@@ -235,7 +235,7 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 
 			// Check if the command is interactive using the tool's implementation
 			isInteractive, errMsg := toolCall.GetTool().IsInteractive(call.Arguments)
-			klog.Infof("isInteractive: %t, errMsg: %s, CallArguments: ", isInteractive, errMsg)
+			klog.Infof("isInteractive: %t, errMsg: %s, CallArguments: %+v", isInteractive, errMsg, call.Arguments)
 
 			// If interactive, handle based on whether we're using tool-use shim
 			if isInteractive {
