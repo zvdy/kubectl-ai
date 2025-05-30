@@ -57,6 +57,9 @@ type Conversation struct {
 
 	EnableToolUseShim bool
 
+	// MCPClientEnabled indicates whether MCP client mode is enabled
+	MCPClientEnabled bool
+
 	// Recorder captures events for diagnostics
 	Recorder journal.Recorder
 
