@@ -103,6 +103,13 @@ func (t *BashTool) Run(ctx context.Context, args map[string]any) (any, error) {
 	workDir := ctx.Value(WorkDirKey).(string)
 	command := args["command"].(string)
 
+	// If modifies_resource is not set but this is a kubectl command,
+	// determine if it modifies resources using our static filter
+	if _, ok := args["modifies_resource"]; !ok && strings.Contains(command, "kubectl") {
+		args["modifies_resource"] = KubectlModifiesResource(command)
+		klog.Infof("Set modifies_resource=%s for command: %s", args["modifies_resource"], command)
+	}
+
 	if strings.Contains(command, "kubectl edit") {
 		return &ExecResult{Error: "interactive mode not supported for kubectl, please use non-interactive commands"}, nil
 	}
