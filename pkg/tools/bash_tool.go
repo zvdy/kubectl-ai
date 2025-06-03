@@ -103,11 +103,14 @@ func (t *BashTool) Run(ctx context.Context, args map[string]any) (any, error) {
 	workDir := ctx.Value(WorkDirKey).(string)
 	command := args["command"].(string)
 
-	// If modifies_resource is not set but this is a kubectl command,
-	// determine if it modifies resources using our static filter
-	if _, ok := args["modifies_resource"]; !ok && strings.Contains(command, "kubectl") {
+	// Always set modifies_resource value for kubectl commands
+	if strings.Contains(command, "kubectl") {
 		args["modifies_resource"] = KubectlModifiesResource(command)
 		klog.Infof("Set modifies_resource=%s for command: %s", args["modifies_resource"], command)
+	} else {
+		// For non-kubectl commands, default to unknown
+		args["modifies_resource"] = "unknown"
+		klog.Infof("Set default modifies_resource=unknown for non-kubectl command: %s", command)
 	}
 
 	if strings.Contains(command, "kubectl edit") {
