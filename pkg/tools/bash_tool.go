@@ -84,15 +84,6 @@ func (t *BashTool) FunctionDefinition() *gollm.FunctionDefinition {
 					Type:        gollm.TypeString,
 					Description: `The bash command to execute.`,
 				},
-				"modifies_resource": {
-					Type: gollm.TypeString,
-					Description: `Whether the command modifies a kubernetes resource.
-Possible values:
-- "yes" if the command modifies a resource
-- "no" if the command does not modify a resource
-- "unknown" if the command's effect on the resource is unknown
-`,
-				},
 			},
 		},
 	}
@@ -102,16 +93,6 @@ func (t *BashTool) Run(ctx context.Context, args map[string]any) (any, error) {
 	kubeconfig := ctx.Value(KubeconfigKey).(string)
 	workDir := ctx.Value(WorkDirKey).(string)
 	command := args["command"].(string)
-
-	// Always set modifies_resource value for kubectl commands
-	if strings.Contains(command, "kubectl") {
-		args["modifies_resource"] = KubectlModifiesResource(command)
-		klog.Infof("Set modifies_resource=%s for command: %s", args["modifies_resource"], command)
-	} else {
-		// For non-kubectl commands, default to unknown
-		args["modifies_resource"] = "unknown"
-		klog.Infof("Set default modifies_resource=unknown for non-kubectl command: %s", command)
-	}
 
 	if strings.Contains(command, "kubectl edit") {
 		return &ExecResult{Error: "interactive mode not supported for kubectl, please use non-interactive commands"}, nil
@@ -303,4 +284,20 @@ func (t *BashTool) IsInteractive(args map[string]any) (bool, error) {
 	}
 
 	return IsInteractiveCommand(command)
+}
+
+// CheckModifiesResource determines if the command modifies kubernetes resources
+// This is used for permission checks before command execution
+// Returns "yes", "no", or "unknown"
+func (t *BashTool) CheckModifiesResource(args map[string]any) string {
+	command, ok := args["command"].(string)
+	if !ok {
+		return "unknown"
+	}
+
+	if strings.Contains(command, "kubectl") {
+		return KubectlModifiesResource(command)
+	}
+
+	return "unknown"
 }

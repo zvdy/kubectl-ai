@@ -72,15 +72,6 @@ func (t *CustomTool) FunctionDefinition() *gollm.FunctionDefinition {
 					Type:        gollm.TypeString,
 					Description: t.config.CommandDesc,
 				},
-				"modifies_resource": {
-					Type: gollm.TypeString,
-					Description: `Whether the command modifies a kubernetes resource.
-Possible values:
-- "yes" if the command modifies a resource
-- "no" if the command does not modify a resource
-- "unknown" if the command's effect on the resource is unknown
-`,
-				},
 			},
 		},
 	}
@@ -106,4 +97,14 @@ func (t *CustomTool) Run(ctx context.Context, args map[string]any) (any, error) 
 	cmd.Env = os.Environ()
 
 	return executeCommand(cmd)
+}
+
+// CheckModifiesResource determines if the command modifies kubernetes resources
+// For custom tools, we'll conservatively assume they might modify resources
+// unless we have specific knowledge otherwise
+// Returns "yes", "no", or "unknown"
+func (t *CustomTool) CheckModifiesResource(args map[string]any) string {
+	// For custom tools, we'll conservatively use "unknown" since we can't
+	// determine their effects on kubernetes resources
+	return "unknown"
 }
