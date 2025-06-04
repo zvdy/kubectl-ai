@@ -337,7 +337,7 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 			}
 
 			// Handle timeout message using UI blocks
-			if execResult, ok := output.(*tools.ExecResult); ok && execResult.StreamType == "timeout" {
+			if execResult, ok := output.(*tools.ExecResult); ok && execResult != nil && execResult.StreamType == "timeout" {
 				a.doc.AddBlock(ui.NewAgentTextBlock().WithText("\nTimeout reached after 7 seconds\n"))
 			}
 
