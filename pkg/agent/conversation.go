@@ -272,12 +272,9 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 
 			// If our code detection returned "unknown", fall back to the LLM's assessment if available
 			if modifiesResourceStr == "unknown" {
-				// For tool-use shim mode, check the Action.ModifiesResource field
-				if a.EnableToolUseShim && call.Name == "bash" || call.Name == "kubectl" {
-					if llmModifies, ok := call.Arguments["modifies_resource"].(string); ok {
-						klog.Infof("Code detection returned 'unknown', falling back to LLM assessment: %s", llmModifies)
-						modifiesResourceStr = llmModifies
-					}
+				if llmModifies, ok := call.Arguments["modifies_resource"].(string); ok {
+					klog.Infof("Code detection returned 'unknown', falling back to LLM assessment: %s", llmModifies)
+					modifiesResourceStr = llmModifies
 				}
 			}
 
