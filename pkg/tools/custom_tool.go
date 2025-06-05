@@ -61,6 +61,7 @@ func (t *CustomTool) Description() string {
 }
 
 // FunctionDefinition returns the tool's function definition.
+
 func (t *CustomTool) FunctionDefinition() *gollm.FunctionDefinition {
 	return &gollm.FunctionDefinition{
 		Name:        t.Name(),
@@ -70,7 +71,16 @@ func (t *CustomTool) FunctionDefinition() *gollm.FunctionDefinition {
 			Properties: map[string]*gollm.Schema{
 				"command": {
 					Type:        gollm.TypeString,
-					Description: t.config.CommandDesc,
+					Description: `The bash command to execute.`,
+				},
+				"modifies_resource": {
+					Type: gollm.TypeString,
+					Description: `Whether the command modifies a kubernetes resource.
+Possible values:
+- "yes" if the command modifies a resource
+- "no" if the command does not modify a resource
+- "unknown" if the command's effect on the resource is unknown
+`,
 				},
 			},
 		},

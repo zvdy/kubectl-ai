@@ -84,6 +84,15 @@ func (t *BashTool) FunctionDefinition() *gollm.FunctionDefinition {
 					Type:        gollm.TypeString,
 					Description: `The bash command to execute.`,
 				},
+				"modifies_resource": {
+					Type: gollm.TypeString,
+					Description: `Whether the command modifies a kubernetes resource.
+Possible values:
+- "yes" if the command modifies a resource
+- "no" if the command does not modify a resource
+- "unknown" if the command's effect on the resource is unknown
+`,
+				},
 			},
 		},
 	}

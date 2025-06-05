@@ -82,6 +82,13 @@ kubectl apply -f pod.yaml
 user: I need to execute a command in the pod
 assistant: kubectl exec my-pod -- /bin/sh -c "your command here"`,
 				},
+				"modifies_resource": {
+					Type: gollm.TypeString,
+					Description: `Whether the command modifies a kubernetes resource.
+Possible values:
+- "yes" if the command modifies a resource
+- "no" if the command does not modify a resource
+- "unknown" if the command's effect on the resource is unknown`},
 			},
 		},
 	}
