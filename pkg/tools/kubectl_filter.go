@@ -21,556 +21,203 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-// analyzeWithShellParser uses the mvdan/sh parser to analyze kubectl commands
-// Returns the resource modification status and whether parsing was successful
-func analyzeWithShellParser(command string) (string, bool) {
-	// Parse the command using mvdan/sh
+// Package-level constants for kubectl operations
+var (
+	readOnlyOps = map[string]bool{
+		"get": true, "describe": true, "explain": true, "top": true,
+		"logs": true, "api-resources": true, "api-versions": true,
+		"version": true, "config": true, "cluster-info": true,
+		"wait": true, "auth": true, "diff": true, "kustomize": true,
+		"help": true, "options": true, "plugin": true, "proxy": true,
+		"completion": true, "convert": true, "alpha": true, "events": true,
+		"port-forward": true,
+	}
+
+	writeOps = map[string]bool{
+		"create": true, "apply": true, "edit": true, "delete": true,
+		"patch": true, "replace": true, "scale": true, "autoscale": true,
+		"expose": true, "rollout": true, "run": true, "set": true,
+		"label": true, "annotate": true, "taint": true, "drain": true,
+		"cordon": true, "uncordon": true, "certificate": true,
+		"debug": true, "attach": true, "cp": true,
+	}
+
+	specialCases = map[string]map[string]string{
+		"auth": {
+			"can-i": "no", "whoami": "no", "reconcile": "yes",
+		},
+		"certificate": {
+			"approve": "yes", "deny": "yes",
+		},
+		"krew": {
+			"install": "yes", "list": "no",
+		},
+	}
+
+	knownPlugins = map[string]string{
+		"view-secret": "no", "tree": "no",
+		"edit-secret": "yes", "restart": "yes",
+	}
+)
+
+// KubectlModifiesResource analyzes a kubectl command to determine if it modifies resources
+func KubectlModifiesResource(command string) string {
+	// Normalize command
+	command = normalizeCommand(command)
+
+	// Parse command
 	parser := syntax.NewParser()
 	file, err := parser.Parse(strings.NewReader(command), "")
 	if err != nil {
-		klog.V(4).Infof("Failed to parse command with mvdan/sh: %v", err)
-		return "unknown", false
+		klog.Errorf("Failed to parse kubectl command: %v, command: %q", err, command)
+		return "unknown"
 	}
 
-	// We expect a single command in most cases
-	if len(file.Stmts) == 0 {
-		return "unknown", false
-	}
+	var result commandResult
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if call, ok := node.(*syntax.CallExpr); ok {
+			result.merge(analyzeCall(call))
+		}
+		return true
+	})
 
-	// For multiple statements (e.g., commands separated by semicolons)
-	numKubectl := 0
-	for _, stmt := range file.Stmts {
-		cmdExpr, ok := stmt.Cmd.(*syntax.CallExpr)
-		if !ok {
-			continue
-		}
-		var args []string
-		for _, word := range cmdExpr.Args {
-			var sb strings.Builder
-			syntax.NewPrinter().Print(&sb, word)
-			wordStr := strings.Trim(sb.String(), `"'`)
-			args = append(args, wordStr)
-		}
-		if len(args) == 0 {
-			continue
-		}
-		kubectlPos := -1
-		for i, arg := range args {
-			if strings.HasSuffix(arg, "kubectl") {
-				kubectlPos = i
-				break
-			}
-		}
-		if kubectlPos == -1 {
-			continue
-		}
-		// Explicitly handle exec as unknown
-		if len(args) > kubectlPos+1 && args[kubectlPos+1] == "exec" {
-			return "unknown", true
-		}
-
-		numKubectl++
-	}
-	if len(file.Stmts) > 1 && numKubectl != len(file.Stmts) {
-		return "unknown", false
-	}
-
-	// For multiple statements (e.g., commands separated by semicolons)
-	// If any statement modifies resources, the whole command is considered to modify resources
-	hasModifications := false
-	hasKubectlCmd := false
-
-	// Check each statement
-	for _, stmt := range file.Stmts {
-		// We only care about command execution statements
-		cmdExpr, ok := stmt.Cmd.(*syntax.CallExpr)
-		if !ok {
-			continue
-		}
-
-		// Get the command parts
-		var args []string
-		for _, word := range cmdExpr.Args {
-			// Create a buffer to hold the word's string representation
-			var sb strings.Builder
-			// Use the printer to get the string representation
-			syntax.NewPrinter().Print(&sb, word)
-			wordStr := sb.String()
-			// Remove any quotes that might be present
-			wordStr = strings.Trim(wordStr, `"'`)
-			args = append(args, wordStr)
-		}
-
-		// Check if this is a kubectl command
-		if len(args) == 0 {
-			continue
-		}
-
-		// Find kubectl in the command arguments
-		kubectlPos := -1
-		for i, arg := range args {
-			if strings.HasSuffix(arg, "kubectl") {
-				kubectlPos = i
-				break
-			}
-		}
-
-		// Not a kubectl command
-		if kubectlPos == -1 {
-			continue
-		}
-
-		hasKubectlCmd = true
-
-		// Check for dry-run flag
-		hasDryRun := false
-		for i := kubectlPos + 1; i < len(args); i++ {
-			if args[i] == "--dry-run" ||
-				strings.HasPrefix(args[i], "--dry-run=") ||
-				(i < len(args)-1 && args[i] == "--dry-run" && (args[i+1] == "client" || args[i+1] == "server")) {
-				hasDryRun = true
-				break
-			}
-		}
-
-		if hasDryRun {
-			// Just skip this command as it doesn't modify resources
-			continue
-		}
-
-		// Now that we've confirmed it's a kubectl command, apply the same logic as the string-based approach
-		if len(args) > kubectlPos+1 {
-			result := analyzeKubectlSubcommand(args[kubectlPos+1:], args)
-			if result == "yes" {
-				hasModifications = true
-			}
-		}
-	}
-
-	// Only return a result if we found at least one kubectl command
-	if hasKubectlCmd {
-		// If there were no args after 'kubectl', treat as unknown (incomplete command)
-		if !hasModifications && len(file.Stmts) == 1 {
-			stmt := file.Stmts[0]
-			cmdExpr, ok := stmt.Cmd.(*syntax.CallExpr)
-			if ok && len(cmdExpr.Args) == 1 {
-				// Extract the string value of the first arg
-				var sb strings.Builder
-				syntax.NewPrinter().Print(&sb, cmdExpr.Args[0])
-				argStr := strings.Trim(sb.String(), `"'`)
-				if strings.HasSuffix(argStr, "kubectl") {
-					return "unknown", false
-				}
-			}
-		}
-		if hasModifications {
-			return "yes", true
-		}
-		return "no", true
-	}
-
-	return "unknown", false
+	klog.V(3).Infof("KubectlModifiesResource result: %v for command: %q", result, command)
+	return result.finalize()
 }
 
-// analyzeKubectlSubcommand analyzes kubectl subcommands to determine if they modify resources
-func analyzeKubectlSubcommand(args []string, allArgs []string) string {
-	if len(args) == 0 {
+type commandResult struct {
+	writeFound   bool
+	readFound    bool
+	unknownFound bool
+}
+
+func (r *commandResult) merge(other commandResult) {
+	r.writeFound = r.writeFound || other.writeFound
+	r.readFound = r.readFound || other.readFound
+	r.unknownFound = r.unknownFound || other.unknownFound
+}
+
+func (r commandResult) finalize() string {
+	if r.writeFound {
+		return "yes"
+	}
+	if r.unknownFound && !r.writeFound {
 		return "unknown"
 	}
-
-	subcommand := args[0]
-
-	// List of prefixes/keywords that indicate read-only operations
-	readOnlyOperations := []string{
-		"get", "describe", "explain", "top", "logs", "api-resources",
-		"api-versions", "version", "config view", "cluster-info",
-		"wait", "auth can-i", "diff", "kustomize", "help",
-		"options", "plugin", "proxy", "completion", "convert",
-		"alpha list", "alpha status", "alpha debug",
-		"events", "auth whoami",
-	}
-
-	// List of prefixes/keywords that indicate resource modification
-	modifyingOperations := []string{
-		"create", "apply", "edit", "delete", "patch", "replace",
-		"scale", "autoscale", "expose", "rollout", "run", "set",
-		"label", "annotate", "taint", "drain", "cordon", "uncordon",
-		"certificate approve", "certificate deny", "debug", "attach",
-		"cp", "auth reconcile",
-		"alpha events trigger",
-	}
-
-	// Check for config commands specifically
-	if subcommand == "config" && len(args) > 1 {
-		// All config commands only modify local kubeconfig, not cluster resources
+	if r.readFound {
 		return "no"
 	}
-
-	// Explicitly handle exec as unknown
-	if subcommand == "exec" {
-		return "unknown"
-	}
-
-	// Explicitly handle port-forward as no
-	if subcommand == "port-forward" {
-		return "no"
-	}
-
-	// Check if this is a compound subcommand
-	if len(args) > 1 &&
-		(subcommand == "certificate" || subcommand == "alpha" || subcommand == "auth") {
-		compoundSubcmd := subcommand + " " + args[1]
-
-		// Check against read-only operations
-		for _, op := range readOnlyOperations {
-			if op == compoundSubcmd {
-				return "no"
-			}
-		}
-
-		// Check against modifying operations
-		for _, op := range modifyingOperations {
-			if op == compoundSubcmd {
-				return "yes"
-			}
-		}
-	}
-
-	// Handle kubectl plugins (commands starting with kubectl-*)
-	if strings.HasPrefix(subcommand, "krew") && len(args) > 1 {
-		krewCmd := args[1]
-		if krewCmd == "install" || krewCmd == "uninstall" || krewCmd == "upgrade" {
-			return "yes"
-		}
-		// Other krew commands like 'list', 'info', 'search' are read-only
-		return "no"
-	}
-
-	// Check common read-only kubectl plugins
-	knownReadOnlyPlugins := []string{
-		"view-secret", "view-serviceaccount-kubeconfig", "tree", "whoami",
-		"get-all", "neat", "view-utilization", "access-matrix", "resource-capacity",
-		"ns", "ctx", "df-pv", "view", "grep", "tail", "dig", "exec-as", "explore",
-		"iexec", "ktop", "krew", "mtail", "pv", "sniff", "status", "trace", "who-can",
-		"view-allocations", "view-utilization", "view-secret",
-	}
-
-	knownModifierPlugins := []string{
-		"edit-secret", "modify-secret", "bulk-action", "restart", "recreate",
-		"ssh", "open-svc", "node-shell", "resource-snapshot", "cost",
-		"drain", "fleet", "example", "whisper-secret", "rename", "rotate-cert",
-		"slice", "transform", "strip-pvc", "cost-capacity", "cost-request",
-	}
-
-	// If it's a plugin command (kubectl-xxx format)
-	// This would be in the original command string
-	for _, arg := range allArgs {
-		if strings.HasPrefix(arg, "kubectl-") {
-			pluginName := strings.TrimPrefix(arg, "kubectl-")
-
-			// Check for read-only plugins
-			for _, plugin := range knownReadOnlyPlugins {
-				if plugin == pluginName {
-					return "no"
-				}
-			}
-
-			// Check for modifying plugins
-			for _, plugin := range knownModifierPlugins {
-				if plugin == pluginName {
-					return "yes"
-				}
-			}
-		}
-	}
-
-	// Also check if this is a plugin invoked directly through kubectl (e.g., kubectl view-secret)
-	if subcommand != "" {
-		// Check for read-only plugins
-		for _, plugin := range knownReadOnlyPlugins {
-			if plugin == subcommand {
-				return "no"
-			}
-		}
-
-		// Check for modifying plugins
-		for _, plugin := range knownModifierPlugins {
-			if plugin == subcommand {
-				return "yes"
-			}
-		}
-	}
-
-	// Check against read-only operations
-	for _, op := range readOnlyOperations {
-		if op == subcommand {
-			return "no"
-		}
-	}
-
-	// Check against modifying operations
-	for _, op := range modifyingOperations {
-		if op == subcommand {
-			return "yes"
-		}
-	}
-
-	// Check for watch flags which are read-only
-	for _, arg := range args {
-		if arg == "-w" || arg == "--watch" {
-			return "no"
-		}
-	}
-
-	// Default to unknown if we can't determine
 	return "unknown"
 }
 
-// KubectlModifiesResource determines if a kubectl command modifies resources.
-// Returns:
-// - "yes" if the command definitely modifies resources
-// - "no" if the command definitely doesn't modify resources
-// - "unknown" if we can't determine for sure
-func KubectlModifiesResource(command string) string {
-	// Try to use the shell parser to analyze the command
-	result, parsed := analyzeWithShellParser(command)
-	if parsed {
-		return result
+// analyzeCall now uses the package-level constants
+func analyzeCall(call *syntax.CallExpr) commandResult {
+	if call == nil || len(call.Args) == 0 {
+		klog.Warning("analyzeCall: call is nil or has no args")
+		return commandResult{unknownFound: true}
 	}
 
-	// Fall back to the traditional string-based method if shell parsing fails
-	// Skip commands that aren't kubectl commands
-	if !strings.Contains(command, "kubectl") {
-		return "unknown"
-	}
-
-	// For multi-statement commands (separated by semicolons), try to split and analyze
-	if strings.Contains(command, ";") || strings.Contains(command, "&&") || strings.Contains(command, "||") {
-		separators := []string{";", "&&", "||"}
-		cmds := []string{command}
-		for _, sep := range separators {
-			var newCmds []string
-			for _, c := range cmds {
-				parts := strings.Split(c, sep)
-				for _, p := range parts {
-					if strings.TrimSpace(p) != "" {
-						newCmds = append(newCmds, strings.TrimSpace(p))
-					}
-				}
-			}
-			cmds = newCmds
+	// Extract command and arguments
+	var args []string
+	for _, arg := range call.Args {
+		lit := arg.Lit()
+		if lit == "" {
+			var sb strings.Builder
+			syntax.NewPrinter().Print(&sb, arg)
+			lit = strings.Trim(sb.String(), `"'`)
 		}
-		for _, cmd := range cmds {
-			if !strings.Contains(cmd, "kubectl") {
-				continue
-			}
-			result := KubectlModifiesResource(cmd)
-			if result == "yes" {
-				return "yes"
-			}
+		if lit != "" {
+			args = append(args, lit)
 		}
 	}
 
-	// Check for dry-run flag first - this overrides any other command type
-	if hasDryRunFlag(command) {
-		return "no"
+	if len(args) == 0 {
+		klog.Warning("analyzeCall: no arguments extracted from call")
+		return commandResult{unknownFound: true}
 	}
 
-	// List of prefixes/keywords that indicate read-only operations
-	readOnlyOperations := []string{
-		"get", "describe", "explain", "top", "logs", "api-resources",
-		"api-versions", "version", "config view", "cluster-info",
-		"wait", "auth can-i", "diff", "kustomize", "help",
-		"options", "plugin", "proxy", "completion", "convert",
-		"alpha list", "alpha status", "alpha events", "alpha debug",
-		"events", "auth whoami",
-	}
-
-	// List of prefixes/keywords that indicate resource modification
-	modifyingOperations := []string{
-		"create", "apply", "edit", "delete", "patch", "replace",
-		"scale", "autoscale", "expose", "rollout", "run", "set",
-		"label", "annotate", "taint", "drain", "cordon", "uncordon",
-		"certificate approve", "certificate deny", "debug", "attach",
-		"cp", "auth reconcile",
-		"alpha events trigger",
-	}
-
-	// Clean up command for easier parsing
-	trimmedCmd := strings.TrimSpace(command)
-	cmdParts := strings.Fields(trimmedCmd) // Using Fields instead of Split to handle multiple spaces
-
-	// Skip if somehow the command doesn't have enough parts
-	if len(cmdParts) < 2 || (len(cmdParts) == 1 && cmdParts[0] == "kubectl") {
-		return "unknown"
-	}
-
-	// Find the position of kubectl in case there are prefixes (like KUBECONFIG=... kubectl)
+	// Find kubectl command
 	kubectlPos := -1
-	for i, part := range cmdParts {
-		if strings.HasSuffix(part, "kubectl") ||
-			strings.Contains(part, "kubectl\"") || // Handle quoted paths with spaces
-			strings.Contains(part, "kubectl'") {
+	for i, arg := range args {
+		if arg == "kubectl" || arg == "/usr/local/bin/kubectl" {
 			kubectlPos = i
 			break
 		}
-	}
-
-	if kubectlPos == -1 || kubectlPos >= len(cmdParts)-1 {
-		return "unknown"
-	}
-
-	// Extract the kubectl subcommand (part after "kubectl")
-	subcommand := cmdParts[kubectlPos+1]
-
-	// Check for config commands specifically first
-	if subcommand == "config" && len(cmdParts) > kubectlPos+2 {
-		configCmd := cmdParts[kubectlPos+2]
-
-		// Read-only config operations
-		if configCmd == "view" && !containsAny(command, []string{"--flatten", "-o"}) {
-			return "no"
+		if strings.Contains(arg, "kubectl") {
+			klog.V(2).Infof("analyzeCall: ambiguous kubectl arg: %q", arg)
+			return commandResult{unknownFound: true}
 		}
-
-		// Modifying config operations
-		if configCmd == "set-context" || configCmd == "use-context" ||
-			configCmd == "set" || configCmd == "unset" || configCmd == "delete-context" {
-			return "yes"
-		}
-
-		// Default for other config commands - they typically modify kubeconfig
-		return "yes"
 	}
 
-	// Check if this is a compound subcommand for other multi-part commands
-	if len(cmdParts) > kubectlPos+2 &&
-		(subcommand == "certificate" || subcommand == "alpha" || subcommand == "auth") {
-		subcommand = subcommand + " " + cmdParts[kubectlPos+2]
+	if kubectlPos == -1 || kubectlPos >= len(args)-1 {
+		klog.Warningf("analyzeCall: kubectl not found or no verb in args: %v", args)
+		return commandResult{unknownFound: true}
 	}
 
-	// Handle kubectl plugins (commands starting with kubectl-*)
-	if strings.HasPrefix(subcommand, "krew") {
-		// Krew plugin manager - only 'install', 'uninstall', and 'upgrade' modify the system
-		if len(cmdParts) > kubectlPos+2 {
-			krewCmd := cmdParts[kubectlPos+2]
-			if krewCmd == "install" || krewCmd == "uninstall" || krewCmd == "upgrade" {
-				return "yes"
+	// Get the verb (first non-flag argument after kubectl)
+	verbPos := kubectlPos + 1
+	for verbPos < len(args) && strings.HasPrefix(args[verbPos], "-") {
+		verbPos++
+	}
+
+	if verbPos >= len(args) {
+		klog.Warningf("analyzeCall: no verb found after kubectl in args: %v", args)
+		return commandResult{unknownFound: true}
+	}
+
+	verb := args[verbPos]
+	hasDryRun := hasDryRunFlag(strings.Join(args, " "))
+
+	// Check special cases first
+	if subcmds, ok := specialCases[verb]; ok && len(args) > verbPos+1 {
+		if result, ok := subcmds[args[verbPos+1]]; ok {
+			if result == "yes" && !hasDryRun {
+				klog.V(2).Infof("analyzeCall: special case write for verb=%q subcmd=%q", verb, args[verbPos+1])
+				return commandResult{writeFound: true}
 			}
-			// Other krew commands like 'list', 'info', 'search' are read-only
-			return "no"
+			klog.V(2).Infof("analyzeCall: special case read for verb=%q subcmd=%q", verb, args[verbPos+1])
+			return commandResult{readFound: true}
 		}
 	}
 
-	// Check common read-only kubectl plugins
-	knownReadOnlyPlugins := []string{
-		"view-secret", "view-serviceaccount-kubeconfig", "tree", "whoami",
-		"get-all", "neat", "view-utilization", "access-matrix", "resource-capacity",
-		"ns", "ctx", "df-pv", "view", "grep", "tail", "dig", "exec-as", "explore",
-		"iexec", "ktop", "krew", "mtail", "pv", "sniff", "status", "trace", "who-can",
-		"view-allocations", "view-utilization", "view-secret",
-	}
-
-	knownModifierPlugins := []string{
-		"edit-secret", "modify-secret", "bulk-action", "restart", "recreate",
-		"ssh", "open-svc", "node-shell", "resource-snapshot", "cost",
-		"drain", "fleet", "example", "whisper-secret", "rename", "rotate-cert",
-		"slice", "transform", "strip-pvc", "cost-capacity", "cost-request",
-	}
-
-	// If it's a plugin command (kubectl-xxx format)
-	if strings.Contains(trimmedCmd, "kubectl-") {
-		pluginName := ""
-		for _, part := range cmdParts {
-			if strings.HasPrefix(part, "kubectl-") {
-				pluginName = strings.TrimPrefix(part, "kubectl-")
-				break
-			}
+	// Check plugins
+	if result, ok := knownPlugins[verb]; ok {
+		if result == "yes" && !hasDryRun {
+			klog.V(2).Infof("analyzeCall: known plugin write for verb=%q", verb)
+			return commandResult{writeFound: true}
 		}
-
-		if pluginName != "" {
-			// Check for read-only plugins
-			for _, plugin := range knownReadOnlyPlugins {
-				if plugin == pluginName {
-					return "no"
-				}
-			}
-
-			// Check for modifying plugins
-			for _, plugin := range knownModifierPlugins {
-				if plugin == pluginName {
-					return "yes"
-				}
-			}
-		}
+		klog.V(2).Infof("analyzeCall: known plugin read for verb=%q", verb)
+		return commandResult{readFound: true}
 	}
 
-	// Check if the subcommand itself is a known plugin name
-	// For example: "kubectl view-secret my-secret"
-	for _, plugin := range knownReadOnlyPlugins {
-		if plugin == subcommand {
-			return "no"
-		}
+	// Check standard operations
+	if writeOps[verb] && !hasDryRun {
+		klog.V(2).Infof("analyzeCall: write op for verb=%q", verb)
+		return commandResult{writeFound: true}
+	}
+	if readOnlyOps[verb] || (writeOps[verb] && hasDryRun) {
+		klog.V(2).Infof("analyzeCall: read op for verb=%q (dry-run=%v)", verb, hasDryRun)
+		return commandResult{readFound: true}
 	}
 
-	for _, plugin := range knownModifierPlugins {
-		if plugin == subcommand {
-			return "yes"
-		}
-	}
-
-	// Check against read-only operations
-	for _, op := range readOnlyOperations {
-		if strings.HasPrefix(subcommand, op) || op == subcommand {
-			return "no"
-		}
-	}
-
-	// Special cases are now handled earlier in the function
-
-	// Check against modifying operations
-	for _, op := range modifyingOperations {
-		if strings.HasPrefix(subcommand, op) || op == subcommand {
-			return "yes"
-		}
-	}
-
-	// We already checked for dry-run flag at the beginning of the function
-
-	// Check if this is a get command with output redirection
-	// For example: "kubectl get pods -o yaml > pods.yaml"
-	// This doesn't modify k8s resources but does modify local files
-	if strings.Contains(command, " > ") || strings.Contains(command, " >> ") {
-		// This isn't modifying Kubernetes resources even though it creates local files
-		if strings.Contains(command, " get ") ||
-			strings.Contains(command, " describe ") {
-			return "no"
-		}
-	}
-
-	// Check for watch flags which are read-only
-	if containsAny(command, []string{"-w", "--watch"}) {
-		return "no"
-	}
-
-	// Default to unknown if we can't determine
-	return "unknown"
+	klog.V(1).Infof("analyzeCall: unknown op for verb=%q", verb)
+	return commandResult{unknownFound: true}
 }
 
-// hasDryRunFlag checks if the command contains any variation of the dry-run flag
+func normalizeCommand(command string) string {
+	command = strings.ReplaceAll(command, "\\n", " ")
+	command = strings.ReplaceAll(command, "\n", " ")
+	return strings.Join(strings.Fields(command), " ")
+}
+
 func hasDryRunFlag(command string) bool {
 	tokens := strings.Fields(command)
-
 	for i, token := range tokens {
-		// Check for various formats of dry-run flag
-		if token == "--dry-run" ||
-			strings.HasPrefix(token, "--dry-run=") {
+		if token == "--dry-run" || strings.HasPrefix(token, "--dry-run=") {
 			return true
 		}
-
-		// Handle space-separated flag value: "--dry-run client" or "--dry-run server"
 		if token == "--dry-run" && i < len(tokens)-1 {
-			nextToken := tokens[i+1]
-			if nextToken == "client" || nextToken == "server" {
+			if tokens[i+1] == "client" || tokens[i+1] == "server" {
 				return true
 			}
 		}
