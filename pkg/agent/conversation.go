@@ -278,7 +278,7 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 				}
 			}
 
-			if !a.SkipPermissions && call.Arguments["modifies_resource"] != "no" {
+			if !a.SkipPermissions && modifiesResourceStr != "no" {
 				confirmationPrompt := `  Do you want to proceed ?
   1) Yes
   2) Yes, and don't ask me again
