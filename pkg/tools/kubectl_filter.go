@@ -29,9 +29,9 @@ var (
 		"logs": true, "api-resources": true, "api-versions": true,
 		"version": true, "config": true, "cluster-info": true,
 		"wait": true, "auth": true, "diff": true, "kustomize": true,
-		"help": true, "options": true, "plugin": true, "proxy": true,
+		"help": true, "options": true, "proxy": true,
 		"completion": true, "convert": true, "alpha": true, "events": true,
-		"port-forward": true,
+		"port-forward": true, "can-i": true, "whoami": true,
 	}
 
 	writeOps = map[string]bool{
@@ -39,22 +39,9 @@ var (
 		"patch": true, "replace": true, "scale": true, "autoscale": true,
 		"expose": true, "rollout": true, "run": true, "set": true,
 		"label": true, "annotate": true, "taint": true, "drain": true,
-		"cordon": true, "uncordon": true, "certificate": true,
-		"debug": true, "attach": true, "cp": true,
-	}
-
-	specialCases = map[string]map[string]string{
-		"auth": {
-			"can-i": "no", "whoami": "no", "reconcile": "yes",
-		},
-		"certificate": {
-			"approve": "yes", "deny": "yes",
-		},
-	}
-
-	knownPlugins = map[string]string{
-		"view-secret": "no", "tree": "no",
-		"edit-secret": "yes", "restart": "yes",
+		"cordon": true, "uncordon": true, "debug": true, "attach": true,
+		"cp": true, "reconcile": true, "approve": true, "deny": true,
+		"certificate": true,
 	}
 )
 
@@ -171,28 +158,6 @@ func analyzeCall(call *syntax.CallExpr) string {
 
 	verb := args[verbPos]
 	hasDryRun := hasDryRunFlag(strings.Join(args, " "))
-
-	// Check special cases first
-	if subcmds, ok := specialCases[verb]; ok && len(args) > verbPos+1 {
-		if result, ok := subcmds[args[verbPos+1]]; ok {
-			if result == "yes" && !hasDryRun {
-				klog.V(2).Infof("analyzeCall: special case write for verb=%q subcmd=%q", verb, args[verbPos+1])
-				return "yes"
-			}
-			klog.V(2).Infof("analyzeCall: special case read for verb=%q subcmd=%q", verb, args[verbPos+1])
-			return "no"
-		}
-	}
-
-	// Check plugins
-	if result, ok := knownPlugins[verb]; ok {
-		if result == "yes" && !hasDryRun {
-			klog.V(2).Infof("analyzeCall: known plugin write for verb=%q", verb)
-			return "yes"
-		}
-		klog.V(2).Infof("analyzeCall: known plugin read for verb=%q", verb)
-		return "no"
-	}
 
 	// Check standard operations - write operations first (prioritize immediate detection)
 	if writeOps[verb] && !hasDryRun {
