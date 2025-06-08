@@ -28,6 +28,7 @@ import (
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/journal"
 	"github.com/google/uuid"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/yaml"
 )
 
@@ -117,14 +118,23 @@ func (t *ToolCall) PrettyPrint() string {
 
 // ParseToolInvocation parses a request from the LLM into a tool call.
 func (t *Tools) ParseToolInvocation(ctx context.Context, name string, arguments map[string]any) (*ToolCall, error) {
-	tool := t.Lookup(name)
+	// Clean up the tool name to handle malformed names from streaming responses
+	cleanName := name
+	if strings.Contains(name, `\"`) {
+		// Split on escaped quotes and take the first part
+		parts := strings.Split(name, `\"`)
+		cleanName = strings.TrimSpace(parts[0])
+		klog.V(2).Infof("Cleaned malformed tool name: %q -> %q", name, cleanName)
+	}
+
+	tool := t.Lookup(cleanName)
 	if tool == nil {
-		return nil, fmt.Errorf("tool %q not recognized", name)
+		return nil, fmt.Errorf("tool %q not recognized", cleanName)
 	}
 
 	return &ToolCall{
 		tool:      tool,
-		name:      name,
+		name:      cleanName,
 		arguments: arguments,
 	}, nil
 }
