@@ -15,6 +15,7 @@
 package tools
 
 import (
+	"path/filepath"
 	"strings"
 
 	"k8s.io/klog/v2"
@@ -48,9 +49,6 @@ var (
 		},
 		"certificate": {
 			"approve": "yes", "deny": "yes",
-		},
-		"krew": {
-			"install": "yes", "list": "no",
 		},
 	}
 
@@ -110,7 +108,6 @@ func (r commandResult) finalize() string {
 	return "unknown"
 }
 
-// analyzeCall now uses the package-level constants
 func analyzeCall(call *syntax.CallExpr) commandResult {
 	if call == nil || len(call.Args) == 0 {
 		klog.Warning("analyzeCall: call is nil or has no args")
@@ -136,26 +133,32 @@ func analyzeCall(call *syntax.CallExpr) commandResult {
 		return commandResult{unknownFound: true}
 	}
 
-	// Find kubectl command
-	kubectlPos := -1
-	for i, arg := range args {
-		if arg == "kubectl" || arg == "/usr/local/bin/kubectl" {
-			kubectlPos = i
-			break
-		}
-		if strings.Contains(arg, "kubectl") {
-			klog.V(2).Infof("analyzeCall: ambiguous kubectl arg: %q", arg)
-			return commandResult{unknownFound: true}
-		}
+	// Check if first argument is kubectl
+	firstArg := args[0]
+
+	// Reject quoted arguments (e.g., '"/path/kubectl"')
+	if (strings.HasPrefix(firstArg, "'") && strings.HasSuffix(firstArg, "'")) || (strings.HasPrefix(firstArg, "\"") && strings.HasSuffix(firstArg, "\"")) {
+		klog.V(2).Infof("analyzeCall: first arg is quoted: %q", firstArg)
+		return commandResult{unknownFound: true}
 	}
 
-	if kubectlPos == -1 || kubectlPos >= len(args)-1 {
-		klog.Warningf("analyzeCall: kubectl not found or no verb in args: %v", args)
+	// Check if this is kubectl using OS-agnostic path handling
+	basename := filepath.Base(firstArg)
+	if !(basename == "kubectl" || basename == "kubectl.exe") {
+		klog.V(2).Infof("analyzeCall: first arg is not kubectl: %q (basename: %q)", firstArg, basename)
+		return commandResult{unknownFound: true}
+	}
+
+	klog.V(2).Infof("analyzeCall: found kubectl: %q", firstArg)
+
+	// Must have at least kubectl + verb
+	if len(args) < 2 {
+		klog.Warningf("analyzeCall: no verb after kubectl in args: %v", args)
 		return commandResult{unknownFound: true}
 	}
 
 	// Get the verb (first non-flag argument after kubectl)
-	verbPos := kubectlPos + 1
+	verbPos := 1 // Start after kubectl at position 0
 	for verbPos < len(args) && strings.HasPrefix(args[verbPos], "-") {
 		verbPos++
 	}
