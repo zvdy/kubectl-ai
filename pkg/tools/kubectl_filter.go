@@ -60,10 +60,6 @@ var (
 
 // KubectlModifiesResource analyzes a kubectl command to determine if it modifies resources
 func KubectlModifiesResource(command string) string {
-	// Normalize command
-	command = normalizeCommand(command)
-
-	// Parse command
 	parser := syntax.NewParser()
 	file, err := parser.Parse(strings.NewReader(command), "")
 	if err != nil {
@@ -71,47 +67,52 @@ func KubectlModifiesResource(command string) string {
 		return "unknown"
 	}
 
-	var result commandResult
+	hasReadCommand := false
+	foundWrite := false
+
+	// Single pass through all command calls
 	syntax.Walk(file, func(node syntax.Node) bool {
+		if foundWrite {
+			return false // Stop walking if we already found a write operation
+		}
+
 		if call, ok := node.(*syntax.CallExpr); ok {
-			result.merge(analyzeCall(call))
+			result := analyzeCall(call)
+
+			// If we find any write operation, mark it and stop
+			if result == "yes" {
+				foundWrite = true
+				return false // Stop walking
+			}
+
+			// Track if we found any read operations
+			if result == "no" {
+				hasReadCommand = true
+			}
 		}
 		return true
 	})
 
-	klog.V(3).Infof("KubectlModifiesResource result: %v for command: %q", result, command)
-	return result.finalize()
-}
-
-type commandResult struct {
-	writeFound   bool
-	readFound    bool
-	unknownFound bool
-}
-
-func (r *commandResult) merge(other commandResult) {
-	r.writeFound = r.writeFound || other.writeFound
-	r.readFound = r.readFound || other.readFound
-	r.unknownFound = r.unknownFound || other.unknownFound
-}
-
-func (r commandResult) finalize() string {
-	if r.writeFound {
+	// Return results based on what we found
+	if foundWrite {
+		klog.V(3).Infof("KubectlModifiesResource result: yes (write operation found) for command: %q", command)
 		return "yes"
 	}
-	if r.unknownFound && !r.writeFound {
-		return "unknown"
-	}
-	if r.readFound {
+
+	if hasReadCommand {
+		klog.V(3).Infof("KubectlModifiesResource result: no (read-only) for command: %q", command)
 		return "no"
 	}
+
+	// Default to unknown if no recognized kubectl commands found
+	klog.V(3).Infof("KubectlModifiesResource result: unknown for command: %q", command)
 	return "unknown"
 }
 
-func analyzeCall(call *syntax.CallExpr) commandResult {
+func analyzeCall(call *syntax.CallExpr) string {
 	if call == nil || len(call.Args) == 0 {
 		klog.Warning("analyzeCall: call is nil or has no args")
-		return commandResult{unknownFound: true}
+		return "unknown"
 	}
 
 	// Extract command and arguments
@@ -130,7 +131,7 @@ func analyzeCall(call *syntax.CallExpr) commandResult {
 
 	if len(args) == 0 {
 		klog.Warning("analyzeCall: no arguments extracted from call")
-		return commandResult{unknownFound: true}
+		return "unknown"
 	}
 
 	// Check if first argument is kubectl
@@ -139,14 +140,14 @@ func analyzeCall(call *syntax.CallExpr) commandResult {
 	// Reject quoted arguments (e.g., '"/path/kubectl"')
 	if (strings.HasPrefix(firstArg, "'") && strings.HasSuffix(firstArg, "'")) || (strings.HasPrefix(firstArg, "\"") && strings.HasSuffix(firstArg, "\"")) {
 		klog.V(2).Infof("analyzeCall: first arg is quoted: %q", firstArg)
-		return commandResult{unknownFound: true}
+		return "unknown"
 	}
 
 	// Check if this is kubectl using OS-agnostic path handling
 	basename := filepath.Base(firstArg)
 	if !(basename == "kubectl" || basename == "kubectl.exe") {
 		klog.V(2).Infof("analyzeCall: first arg is not kubectl: %q (basename: %q)", firstArg, basename)
-		return commandResult{unknownFound: true}
+		return "unknown"
 	}
 
 	klog.V(2).Infof("analyzeCall: found kubectl: %q", firstArg)
@@ -154,7 +155,7 @@ func analyzeCall(call *syntax.CallExpr) commandResult {
 	// Must have at least kubectl + verb
 	if len(args) < 2 {
 		klog.Warningf("analyzeCall: no verb after kubectl in args: %v", args)
-		return commandResult{unknownFound: true}
+		return "unknown"
 	}
 
 	// Get the verb (first non-flag argument after kubectl)
@@ -165,7 +166,7 @@ func analyzeCall(call *syntax.CallExpr) commandResult {
 
 	if verbPos >= len(args) {
 		klog.Warningf("analyzeCall: no verb found after kubectl in args: %v", args)
-		return commandResult{unknownFound: true}
+		return "unknown"
 	}
 
 	verb := args[verbPos]
@@ -176,10 +177,10 @@ func analyzeCall(call *syntax.CallExpr) commandResult {
 		if result, ok := subcmds[args[verbPos+1]]; ok {
 			if result == "yes" && !hasDryRun {
 				klog.V(2).Infof("analyzeCall: special case write for verb=%q subcmd=%q", verb, args[verbPos+1])
-				return commandResult{writeFound: true}
+				return "yes"
 			}
 			klog.V(2).Infof("analyzeCall: special case read for verb=%q subcmd=%q", verb, args[verbPos+1])
-			return commandResult{readFound: true}
+			return "no"
 		}
 	}
 
@@ -187,30 +188,26 @@ func analyzeCall(call *syntax.CallExpr) commandResult {
 	if result, ok := knownPlugins[verb]; ok {
 		if result == "yes" && !hasDryRun {
 			klog.V(2).Infof("analyzeCall: known plugin write for verb=%q", verb)
-			return commandResult{writeFound: true}
+			return "yes"
 		}
 		klog.V(2).Infof("analyzeCall: known plugin read for verb=%q", verb)
-		return commandResult{readFound: true}
+		return "no"
 	}
 
-	// Check standard operations
+	// Check standard operations - write operations first (prioritize immediate detection)
 	if writeOps[verb] && !hasDryRun {
 		klog.V(2).Infof("analyzeCall: write op for verb=%q", verb)
-		return commandResult{writeFound: true}
+		return "yes"
 	}
+
+	// Check read-only operations or dry-run write operations
 	if readOnlyOps[verb] || (writeOps[verb] && hasDryRun) {
 		klog.V(2).Infof("analyzeCall: read op for verb=%q (dry-run=%v)", verb, hasDryRun)
-		return commandResult{readFound: true}
+		return "no"
 	}
 
 	klog.V(1).Infof("analyzeCall: unknown op for verb=%q", verb)
-	return commandResult{unknownFound: true}
-}
-
-func normalizeCommand(command string) string {
-	command = strings.ReplaceAll(command, "\\n", " ")
-	command = strings.ReplaceAll(command, "\n", " ")
-	return strings.Join(strings.Fields(command), " ")
+	return "unknown"
 }
 
 func hasDryRunFlag(command string) bool {
