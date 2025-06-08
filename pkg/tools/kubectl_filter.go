@@ -82,17 +82,17 @@ func KubectlModifiesResource(command string) string {
 
 	// Return results based on what we found
 	if foundWrite {
-		klog.V(3).Infof("KubectlModifiesResource result: yes (write operation found) for command: %q", command)
+		klog.Infof("KubectlModifiesResource result: yes (write operation found) for command: %q", command)
 		return "yes"
 	}
 
 	if hasReadCommand {
-		klog.V(3).Infof("KubectlModifiesResource result: no (read-only) for command: %q", command)
+		klog.Infof("KubectlModifiesResource result: no (read-only) for command: %q", command)
 		return "no"
 	}
 
 	// Default to unknown if no recognized kubectl commands found
-	klog.V(3).Infof("KubectlModifiesResource result: unknown for command: %q", command)
+	klog.Infof("KubectlModifiesResource result: unknown for command: %q", command)
 	return "unknown"
 }
 
@@ -161,13 +161,13 @@ func analyzeCall(call *syntax.CallExpr) string {
 
 	// Check standard operations - write operations first (prioritize immediate detection)
 	if writeOps[verb] && !hasDryRun {
-		klog.V(2).Infof("analyzeCall: write op for verb=%q", verb)
+		klog.V(1).Infof("analyzeCall: write op for verb=%q", verb)
 		return "yes"
 	}
 
 	// Check read-only operations or dry-run write operations
 	if readOnlyOps[verb] || (writeOps[verb] && hasDryRun) {
-		klog.V(2).Infof("analyzeCall: read op for verb=%q (dry-run=%v)", verb, hasDryRun)
+		klog.V(1).Infof("analyzeCall: read op for verb=%q (dry-run=%v)", verb, hasDryRun)
 		return "no"
 	}
 
