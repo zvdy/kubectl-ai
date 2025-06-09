@@ -116,7 +116,7 @@ func TestKubectlModifiesResource(t *testing.T) {
 			{"Field manager", "kubectl apply -f deploy.yaml --field-manager=controller", "yes"},
 			{"Create service account", "kubectl create serviceaccount jenkins", "yes"},
 			{"Create role binding", "kubectl create rolebinding admin --clusterrole=admin --user=user1 --namespace=default", "yes"},
-			{"Versioned kubectl", "kubectl.1.24 get pods", "unknown"},
+			{"Versioned kubectl", "kubectl.1.24 get pods", "no"},
 			{"Config set credentials", "kubectl config set-credentials cluster-admin --token=secret", "no"},
 			{"Config view with flatten", "kubectl config view --flatten", "no"},
 			{"Config view with output", "kubectl config view -o json", "no"},
@@ -245,7 +245,7 @@ func TestKubectlCommandParsing(t *testing.T) {
 
 		// Non-kubectl commands
 		{"not kubectl", "k get pods", "unknown", "kubectl alias"},
-		{"kubectl suffix", "kubectl-1.28 get pods", "unknown", "kubectl with version suffix"},
+		{"kubectl suffix", "kubectl-1.28 get pods", "no", "kubectl with version suffix"},
 		{"kubectl prefix", "kubectl-proxy --port=8080", "unknown", "kubectl with additional suffix"},
 		{"different command", "kubectx production", "unknown", "different k8s tool"},
 
