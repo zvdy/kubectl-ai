@@ -172,28 +172,3 @@ func hasDryRunFlag(command string) bool {
 	}
 	return false
 }
-
-// containsAny checks if the command contains any of the given strings
-// For flag detection, it properly checks word boundaries to avoid false positives
-func containsAny(command string, substrings []string) bool {
-	// Split the command into space-separated tokens to properly detect flags
-	tokens := strings.Fields(command)
-
-	for _, substr := range substrings {
-		// Simple substring check for non-flag strings
-		if !strings.HasPrefix(substr, "--") {
-			if strings.Contains(command, substr) {
-				return true
-			}
-			continue
-		}
-
-		// For flags, we need to ensure proper flag matching
-		for _, token := range tokens {
-			if token == substr || strings.HasPrefix(token, substr+"=") {
-				return true
-			}
-		}
-	}
-	return false
-}

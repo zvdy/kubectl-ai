@@ -176,28 +176,6 @@ func TestKubectlAnalyzerComponents(t *testing.T) {
 		}
 	})
 
-	t.Run("containsAny detection", func(t *testing.T) {
-		tests := []struct {
-			command    string
-			substrings []string
-			expected   bool
-		}{
-			{"kubectl get pods -w", []string{"-w", "--watch"}, true},
-			{"kubectl get pods --watch", []string{"-w", "--watch"}, true},
-			{"kubectl get pods", []string{"-w", "--watch"}, false},
-			{"kubectl get pods -o wide", []string{"-o", "--output"}, true},
-			{"kubectl get pods --output=json", []string{"--output"}, true},
-			{"kubectl get pods -output=json", []string{"--output"}, false}, // Wrong flag format
-		}
-
-		for _, tt := range tests {
-			result := containsAny(tt.command, tt.substrings)
-			if result != tt.expected {
-				t.Errorf("containsAny(%q, %v) = %v, want %v", tt.command, tt.substrings, result, tt.expected)
-			}
-		}
-	})
-
 	t.Run("command parsing", func(t *testing.T) {
 		tests := []struct {
 			command     string
