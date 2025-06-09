@@ -41,7 +41,7 @@ type Tool interface {
 	// Returns true if interactive, with an error explaining why it's interactive
 	IsInteractive(args map[string]any) (bool, error)
 
-	// CheckModifiesResource determines if the command modifies kubernetes resources
+	// CheckModifiesResource determines if the command modifies resources
 	// This is used for permission checks before command execution
 	// Returns "yes", "no", or "unknown"
 	CheckModifiesResource(args map[string]any) string
