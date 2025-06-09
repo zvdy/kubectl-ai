@@ -52,7 +52,7 @@ func TestKubectlModifiesResource(t *testing.T) {
 			{"Kustomize", "kubectl kustomize ./", "no"},
 			{"Convert", "kubectl convert -f pod.yaml --output-version=v1", "no"},
 			{"Events", "kubectl events", "no"},
-			{"Alpha debug", "kubectl alpha debug pod/nginx", "no"},
+			{"Alpha debug", "kubectl alpha debug pod/nginx", "unknown"},
 			{"Auth whoami", "kubectl auth whoami", "no"},
 		},
 		"modifying commands": {
@@ -141,7 +141,7 @@ func TestKubectlModifiesResource(t *testing.T) {
 		t.Run(category, func(t *testing.T) {
 			for _, tt := range cases {
 				t.Run(tt.name, func(t *testing.T) {
-					result := KubectlModifiesResource(tt.command)
+					result := kubectlModifiesResource(tt.command)
 					if result != tt.expected {
 						t.Errorf("KubectlModifiesResource(%q) = %q, want %q",
 							tt.command, result, tt.expected)
@@ -211,7 +211,7 @@ func TestKubectlAnalyzerComponents(t *testing.T) {
 		}
 
 		for _, tt := range tests {
-			result := KubectlModifiesResource(tt.command)
+			result := kubectlModifiesResource(tt.command)
 			if result != tt.expectedRes {
 				t.Errorf("KubectlModifiesResource(%q) = %q, want %q",
 					tt.command, result, tt.expectedRes)
@@ -265,7 +265,7 @@ func TestKubectlCommandParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := KubectlModifiesResource(tt.command)
+			result := kubectlModifiesResource(tt.command)
 			if result != tt.expected {
 				t.Errorf("KubectlModifiesResource(%q) = %q, want %q\nDescription: %s",
 					tt.command, result, tt.expected, tt.desc)

@@ -30,7 +30,7 @@ var (
 		"version": true, "config": true, "cluster-info": true,
 		"wait": true, "auth": true, "diff": true, "kustomize": true,
 		"help": true, "options": true, "proxy": true,
-		"completion": true, "convert": true, "alpha": true, "events": true,
+		"completion": true, "convert": true, "events": true,
 		"port-forward": true, "can-i": true, "whoami": true,
 	}
 
@@ -46,7 +46,7 @@ var (
 )
 
 // KubectlModifiesResource analyzes a kubectl command to determine if it modifies resources
-func KubectlModifiesResource(command string) string {
+func kubectlModifiesResource(command string) string {
 	parser := syntax.NewParser()
 	file, err := parser.Parse(strings.NewReader(command), "")
 	if err != nil {

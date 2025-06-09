@@ -314,7 +314,7 @@ func (t *BashTool) CheckModifiesResource(args map[string]any) string {
 	}
 
 	if strings.Contains(command, "kubectl") {
-		return KubectlModifiesResource(command)
+		return kubectlModifiesResource(command)
 	}
 
 	return "unknown"

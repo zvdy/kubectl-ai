@@ -160,5 +160,5 @@ func (t *Kubectl) CheckModifiesResource(args map[string]any) string {
 		return "unknown"
 	}
 
-	return KubectlModifiesResource(command)
+	return kubectlModifiesResource(command)
 }
