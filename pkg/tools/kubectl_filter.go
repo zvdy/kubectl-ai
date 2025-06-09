@@ -171,14 +171,9 @@ func analyzeCall(call *syntax.CallExpr) string {
 
 func hasDryRunFlag(command string) bool {
 	tokens := strings.Fields(command)
-	for i, token := range tokens {
-		if token == "--dry-run" || strings.HasPrefix(token, "--dry-run=") {
+	for _, token := range tokens {
+		if strings.HasPrefix(token, "--dry-run") {
 			return true
-		}
-		if token == "--dry-run" && i < len(tokens)-1 {
-			if tokens[i+1] == "client" || tokens[i+1] == "server" {
-				return true
-			}
 		}
 	}
 	return false
