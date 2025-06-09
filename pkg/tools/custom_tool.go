@@ -109,12 +109,11 @@ func (t *CustomTool) Run(ctx context.Context, args map[string]any) (any, error) 
 	return executeCommand(cmd)
 }
 
-// CheckModifiesResource determines if the command modifies kubernetes resources
+// CheckModifiesResource determines if the command modifies resources
 // For custom tools, we'll conservatively assume they might modify resources
 // unless we have specific knowledge otherwise
 // Returns "yes", "no", or "unknown"
 func (t *CustomTool) CheckModifiesResource(args map[string]any) string {
 	// For custom tools, we'll conservatively use "unknown" since we can't
-	// determine their effects on kubernetes resources
 	return "unknown"
 }
