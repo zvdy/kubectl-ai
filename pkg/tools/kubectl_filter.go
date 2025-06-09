@@ -133,12 +133,6 @@ func analyzeCall(call *syntax.CallExpr) string {
 
 	klog.V(2).Infof("analyzeCall: found kubectl: %q", firstArg)
 
-	// Must have at least kubectl + verb
-	if len(args) < 2 {
-		klog.Warningf("analyzeCall: no verb after kubectl in args: %v", args)
-		return "unknown"
-	}
-
 	// Get the verb (first non-flag argument after kubectl)
 	verbPos := 1 // Start after kubectl at position 0
 	for verbPos < len(args) && strings.HasPrefix(args[verbPos], "-") {
