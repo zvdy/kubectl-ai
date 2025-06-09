@@ -59,10 +59,6 @@ func kubectlModifiesResource(command string) string {
 
 	// Single pass through all command calls
 	syntax.Walk(file, func(node syntax.Node) bool {
-		if foundWrite {
-			return false // Stop walking if we already found a write operation
-		}
-
 		if call, ok := node.(*syntax.CallExpr); ok {
 			result := analyzeCall(call)
 
