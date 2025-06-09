@@ -15,7 +15,6 @@
 package tools
 
 import (
-	"path/filepath"
 	"strings"
 
 	"k8s.io/klog/v2"
@@ -126,10 +125,9 @@ func analyzeCall(call *syntax.CallExpr) string {
 		return "unknown"
 	}
 
-	// Check if this is kubectl using OS-agnostic path handling
-	basename := filepath.Base(firstArg)
-	if !(basename == "kubectl" || basename == "kubectl.exe") {
-		klog.V(2).Infof("analyzeCall: first arg is not kubectl: %q (basename: %q)", firstArg, basename)
+	// Check if this is kubectl
+	if !strings.Contains(firstArg, "kubectl") {
+		klog.V(2).Infof("analyzeCall: first arg does not contain kubectl: %q", firstArg)
 		return "unknown"
 	}
 
