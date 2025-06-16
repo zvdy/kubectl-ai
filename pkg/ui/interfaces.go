@@ -14,6 +14,8 @@
 
 package ui
 
+import "html/template"
+
 type UI interface {
 	// ClearScreen clears any output rendered to the screen
 	ClearScreen()
@@ -44,4 +46,8 @@ func RenderMarkdown() StyleOption {
 	return func(s *ComputedStyle) {
 		s.RenderMarkdown = true
 	}
+}
+
+type CanFormatAsHTML interface {
+	FormatAsHTML() template.HTML
 }

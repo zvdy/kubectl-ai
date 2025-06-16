@@ -89,7 +89,12 @@ type ToolCall struct {
 	arguments map[string]any
 }
 
-func (t *ToolCall) PrettyPrint() string {
+// Description returns a description of the tool call.
+// This is used to display the tool call in the UI.
+// It should be human-readable,
+// and should be concise enough that the user can read it quickly,
+// but precise enough that the user can decide whether to invoke the tool.
+func (t *ToolCall) Description() string {
 	// Check if this is an MCP tool and format accordingly
 	if mcpTool, ok := t.tool.(*MCPTool); ok {
 		if command, ok := t.arguments["command"]; ok {
