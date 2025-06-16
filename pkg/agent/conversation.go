@@ -159,6 +159,14 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 			Payload:   []any{currChatContent},
 		})
 
+		var agentTextBlock *ui.AgentTextBlock
+
+		// We create the agent text block here; this lets renderers render a "thinking" state
+		// before the first response arrives.
+		agentTextBlock = ui.NewAgentTextBlock()
+		agentTextBlock.SetStreaming(true)
+		a.doc.AddBlock(agentTextBlock)
+
 		stream, err := a.llmChat.SendStreaming(ctx, currChatContent...)
 		if err != nil {
 			return err
@@ -177,8 +185,6 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 
 		// Process each part of the response
 		var functionCalls []gollm.FunctionCall
-
-		var agentTextBlock *ui.AgentTextBlock
 
 		for response, err := range stream {
 			if err != nil {
