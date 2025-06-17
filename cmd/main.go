@@ -531,6 +531,7 @@ func (s *session) repl(ctx context.Context, initialQuery string, initialBlocks [
 	for {
 		if query == "" {
 			input := ui.NewInputTextBlock()
+			input.SetEditable(true)
 			s.doc.AddBlock(input)
 
 			userInput, err := input.Observable().Wait()
