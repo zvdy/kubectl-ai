@@ -103,3 +103,7 @@ Task: scale-down-deployment
 ```
 
 The `analyze` subcommand will gather the results from previous runs and display them in a tabular format with emoji indicators for success (✅) and failure (❌).
+
+### Contributions
+
+We're open to contributions in k8s-bench, check out the [contributions guide.](contributing.md)
