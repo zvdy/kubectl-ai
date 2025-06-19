@@ -272,8 +272,9 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 			}
 
 			// Only show "Running" message and proceed with execution for non-interactive commands
-			s := toolCall.PrettyPrint()
-			a.doc.AddBlock(ui.NewFunctionCallRequestBlock().SetText(fmt.Sprintf("  Running: %s\n", s)))
+			toolDescription := toolCall.Description()
+			functionCallRequestBlock := ui.NewFunctionCallRequestBlock().SetDescription(toolDescription)
+			a.doc.AddBlock(functionCallRequestBlock)
 
 			// Ask for confirmation only if SkipPermissions is false AND the tool modifies resources.
 			// Use the tool's CheckModifiesResource method to determine if the command modifies resources
@@ -354,6 +355,8 @@ func (a *Conversation) RunOneRound(ctx context.Context, query string) error {
 				observation := fmt.Sprintf("Result of running %q:\n%v", call.Name, output)
 				currChatContent = append(currChatContent, observation)
 			} else {
+				functionCallRequestBlock.SetResult(output)
+
 				// If shim is disabled, convert the result to a map and append FunctionCallResult
 				result, err := tools.ToolResultToMap(output)
 				if err != nil {

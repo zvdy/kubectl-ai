@@ -14,6 +14,10 @@
 
 package ui
 
+import (
+	"html/template"
+)
+
 // AgentTextBlock is used to render agent textual responses
 type AgentTextBlock struct {
 	doc *Document
@@ -77,8 +81,11 @@ func (b *AgentTextBlock) AppendText(text string) {
 type FunctionCallRequestBlock struct {
 	doc *Document
 
-	// text is populated if this is agent text output
-	text string
+	// description describes the function call
+	description string
+
+	// result is populated after the function call has been executed
+	result any
 }
 
 func NewFunctionCallRequestBlock() *FunctionCallRequestBlock {
@@ -93,12 +100,31 @@ func (b *FunctionCallRequestBlock) Document() *Document {
 	return b.doc
 }
 
-func (b *FunctionCallRequestBlock) Text() string {
-	return b.text
+func (b *FunctionCallRequestBlock) Description() string {
+	return b.description
 }
 
-func (b *FunctionCallRequestBlock) SetText(agentText string) *FunctionCallRequestBlock {
-	b.text = agentText
+func (b *FunctionCallRequestBlock) Result() any {
+	return b.result
+}
+
+func (b *FunctionCallRequestBlock) ResultHTML() template.HTML {
+	if _, ok := b.result.(CanFormatAsHTML); ok {
+		return b.result.(CanFormatAsHTML).FormatAsHTML()
+	}
+	htmlFragment := "Done"
+	safeHTML := template.HTML(htmlFragment)
+	return safeHTML
+}
+
+func (b *FunctionCallRequestBlock) SetDescription(description string) *FunctionCallRequestBlock {
+	b.description = description
+	b.doc.blockChanged(b)
+	return b
+}
+
+func (b *FunctionCallRequestBlock) SetResult(result any) *FunctionCallRequestBlock {
+	b.result = result
 	b.doc.blockChanged(b)
 	return b
 }

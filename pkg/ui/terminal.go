@@ -164,7 +164,7 @@ func (u *TerminalUI) DocumentChanged(doc *Document, block Block) {
 		text = block.Text()
 	case *FunctionCallRequestBlock:
 		styleOptions = append(styleOptions, Foreground(ColorGreen))
-		text = block.Text()
+		text = fmt.Sprintf("  Running: %s\n", block.Description())
 	case *AgentTextBlock:
 		styleOptions = append(styleOptions, RenderMarkdown())
 		if block.Color != "" {
