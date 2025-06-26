@@ -14,6 +14,10 @@
 
 package ui
 
+import (
+	"html/template"
+)
+
 // AgentTextBlock is used to render agent textual responses
 type AgentTextBlock struct {
 	doc *Document
@@ -77,8 +81,11 @@ func (b *AgentTextBlock) AppendText(text string) {
 type FunctionCallRequestBlock struct {
 	doc *Document
 
-	// text is populated if this is agent text output
-	text string
+	// description describes the function call
+	description string
+
+	// result is populated after the function call has been executed
+	result any
 }
 
 func NewFunctionCallRequestBlock() *FunctionCallRequestBlock {
@@ -93,12 +100,31 @@ func (b *FunctionCallRequestBlock) Document() *Document {
 	return b.doc
 }
 
-func (b *FunctionCallRequestBlock) Text() string {
-	return b.text
+func (b *FunctionCallRequestBlock) Description() string {
+	return b.description
 }
 
-func (b *FunctionCallRequestBlock) SetText(agentText string) *FunctionCallRequestBlock {
-	b.text = agentText
+func (b *FunctionCallRequestBlock) Result() any {
+	return b.result
+}
+
+func (b *FunctionCallRequestBlock) ResultHTML() template.HTML {
+	if _, ok := b.result.(CanFormatAsHTML); ok {
+		return b.result.(CanFormatAsHTML).FormatAsHTML()
+	}
+	htmlFragment := "Done"
+	safeHTML := template.HTML(htmlFragment)
+	return safeHTML
+}
+
+func (b *FunctionCallRequestBlock) SetDescription(description string) *FunctionCallRequestBlock {
+	b.description = description
+	b.doc.blockChanged(b)
+	return b
+}
+
+func (b *FunctionCallRequestBlock) SetResult(result any) *FunctionCallRequestBlock {
+	b.result = result
 	b.doc.blockChanged(b)
 	return b
 }
@@ -179,27 +205,52 @@ type InputOptionBlock struct {
 	doc *Document
 
 	// Options are the valid options that can be chosen
-	Options []string
+	Options []InputOptionChoice
 
 	// Prompt is the prompt to show the user
 	Prompt string
 
-	// text is populated when we have input from the user
-	text Observable[string]
+	// selection is populated when we have input from the user
+	selection Observable[string]
+}
+
+type InputOptionChoice struct {
+	// Key is the internal system identifier for the option
+	Key string
+
+	// Message is the text to show the user
+	Message string
+
+	// Aliases are alternative shortcuts for the option (other than the number),
+	//typically used in terminal mode.
+	Aliases []string
 }
 
 func NewInputOptionBlock() *InputOptionBlock {
 	return &InputOptionBlock{}
 }
 
-func (b *InputOptionBlock) SetOptions(options []string) *InputOptionBlock {
-	b.Options = options
+// Editable returns true if the input option block is editable
+func (b *InputOptionBlock) Editable() bool {
+	v, err := b.selection.Get()
+	return err == nil && v == ""
+}
+
+// AddOption adds an option to the input option block
+func (b *InputOptionBlock) AddOption(key string, message string, aliases ...string) *InputOptionBlock {
+	b.Options = append(b.Options, InputOptionChoice{
+		Key:     key,
+		Message: message,
+		Aliases: aliases,
+	})
+	b.doc.blockChanged(b)
 	return b
 }
 
 // SetPrompt sets the prompt to show the user
 func (b *InputOptionBlock) SetPrompt(prompt string) *InputOptionBlock {
 	b.Prompt = prompt
+	b.doc.blockChanged(b)
 	return b
 }
 
@@ -211,6 +262,6 @@ func (b *InputOptionBlock) Document() *Document {
 	return b.doc
 }
 
-func (b *InputOptionBlock) Observable() *Observable[string] {
-	return &b.text
+func (b *InputOptionBlock) Selection() *Observable[string] {
+	return &b.selection
 }

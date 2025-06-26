@@ -177,7 +177,20 @@ func (u *HTMLUserInterface) handlePOSTChooseOption(w http.ResponseWriter, req *h
 		return
 	}
 
-	inputOptionBlock.Observable().Set(optionKey, nil)
+	foundOption := false
+	for _, option := range inputOptionBlock.Options {
+		if option.Key == optionKey {
+			inputOptionBlock.Selection().Set(option.Key, nil)
+			foundOption = true
+			break
+		}
+	}
+
+	if !foundOption {
+		log.Info("option not found", "option", optionKey)
+		http.Error(w, "option not found", http.StatusBadRequest)
+	}
+
 	var bb bytes.Buffer
 	bb.WriteString("ok")
 	w.Write(bb.Bytes())
@@ -218,7 +231,7 @@ func (u *HTMLUserInterface) serveDocStream(w http.ResponseWriter, req *http.Requ
 		}
 		sse.WriteString("\n")
 		w.Write(sse.Bytes())
-		log.Info("writing SSE", "data", sse.String())
+		log.V(6).Info("writing SSE", "data", sse.String())
 		rc.Flush()
 	}
 
@@ -244,7 +257,7 @@ func (u *HTMLUserInterface) serveDocStream(w http.ResponseWriter, req *http.Requ
 			return
 		case <-keepAliveTimer.C:
 			// Send a ping
-			log.V(4).Info("sending SSE ping")
+			log.V(6).Info("sending SSE ping")
 			if _, err := fmt.Fprintf(w, "event: Ping\ndata: {}\n\n"); err != nil {
 				return
 			}
@@ -265,7 +278,7 @@ func renderTemplate(ctx context.Context, w io.Writer, key string, data any) erro
 		return fmt.Errorf("executing %q: %w", key, err)
 	}
 
-	log.Info("rendered page", "key", key)
+	log.V(8).Info("rendered template", "key", key)
 	return nil
 }
 
