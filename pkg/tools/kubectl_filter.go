@@ -139,6 +139,12 @@ func analyzeCall(call *syntax.CallExpr) string {
 		verbPos++
 	}
 
+	// If any flags appear before the verb, mark as unknown (edge case)
+	if verbPos > 1 {
+		klog.Warningf("analyzeCall: flags found before verb in args: %v", args)
+		return "unknown"
+	}
+
 	if verbPos >= len(args) {
 		klog.Warningf("analyzeCall: no verb found after kubectl in args: %v", args)
 		return "unknown"
