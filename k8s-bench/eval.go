@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -152,6 +153,15 @@ func writeToYAMLFile(p string, obj any) error {
 func loadTasks(config EvalConfig) (map[string]Task, error) {
 	tasks := make(map[string]Task)
 
+	var taskFilter *regexp.Regexp
+	if config.TaskPattern != "" {
+		var err error
+		taskFilter, err = regexp.Compile(config.TaskPattern)
+		if err != nil {
+			return nil, fmt.Errorf("compiling task pattern regex %q: %w", config.TaskPattern, err)
+		}
+	}
+
 	entries, err := os.ReadDir(config.TasksDir)
 	if err != nil {
 		return nil, err
@@ -163,7 +173,7 @@ func loadTasks(config EvalConfig) (map[string]Task, error) {
 		}
 
 		taskID := entry.Name()
-		if config.TaskPattern != "" && !strings.Contains(taskID, config.TaskPattern) {
+		if taskFilter != nil && !taskFilter.MatchString(taskID) {
 			continue
 		}
 
@@ -393,7 +403,14 @@ func (x *TaskExecution) runAgent(ctx context.Context) error {
 	go func() {
 		// TODO: Wait for idle between sending steps?
 		for _, step := range x.task.Script {
-			fmt.Fprintf(stdinWriter, "%s\n", step.Prompt)
+			prompt, err := step.ResolvePrompt(x.taskDir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving prompt: %v\n", err)
+				x.result.AddFailure("failed to resolve prompt: %v", err)
+				stdinWriter.Close()
+				return
+			}
+			fmt.Fprintf(stdinWriter, "%s\n", prompt)
 		}
 		stdinWriter.Close()
 	}()

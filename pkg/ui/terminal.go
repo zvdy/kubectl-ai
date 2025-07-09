@@ -27,6 +27,7 @@ import (
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/journal"
 	"github.com/charmbracelet/glamour"
 	"github.com/chzyer/readline"
+	"golang.org/x/term"
 	"k8s.io/klog/v2"
 )
 
@@ -54,12 +55,46 @@ type TerminalUI struct {
 
 var _ UI = &TerminalUI{}
 
+func getCustomTerminalWidth() int {
+	// Check for user-configured width via environment variable
+	if widthStr := os.Getenv("KUBECTL_AI_TERM_WIDTH"); widthStr != "" {
+
+		if widthStr == "auto" {
+			width, _, err := term.GetSize(int(os.Stdout.Fd()))
+
+			if err != nil {
+				klog.Warningf("Failed to get terminal size: %v, using default width", err)
+				return 0
+			}
+
+			return width
+		}
+
+		if width, err := strconv.Atoi(widthStr); err == nil && width > 0 {
+			return width
+		}
+		klog.Warningf("Invalid KUBECTL_AI_TERM_WIDTH value %q, using default", widthStr)
+	}
+
+	// Return 0 to indicate no custom width should be set (use glamour's default)
+	return 0
+}
+
 func NewTerminalUI(doc *Document, journal journal.Recorder, useTTYForInput bool) (*TerminalUI, error) {
-	mdRenderer, err := glamour.NewTermRenderer(
+	width := getCustomTerminalWidth()
+
+	options := []glamour.TermRendererOption{
 		glamour.WithAutoStyle(),
 		glamour.WithPreservedNewLines(),
 		glamour.WithEmoji(),
-	)
+	}
+
+	// Only add WordWrap if a valid width is configured
+	if width > 0 {
+		options = append(options, glamour.WithWordWrap(width))
+	}
+
+	mdRenderer, err := glamour.NewTermRenderer(options...)
 	if err != nil {
 		return nil, fmt.Errorf("error initializing the markdown renderer: %w", err)
 	}
