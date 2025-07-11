@@ -14,40 +14,45 @@
 
 package ui
 
-import "html/template"
+import (
+	"context"
+	"fmt"
+)
 
+// UI is the interface that defines the capabilities of assisant's user interface.
+// Each of the UIs, CLI, TUI, Web, etc. implement this interface.
 type UI interface {
 	// ClearScreen clears any output rendered to the screen
 	ClearScreen()
+
+	// Run starts the UI and blocks until the context is done.
+	Run(ctx context.Context) error
 }
 
-type ComputedStyle struct {
-	Foreground     ColorValue
-	RenderMarkdown bool
-}
-
-type ColorValue string
+// Type is the type of user interface.
+type Type string
 
 const (
-	ColorGreen ColorValue = "green"
-	ColorWhite            = "white"
-	ColorRed              = "red"
+	UITypeTerminal Type = "terminal"
+	UITypeWeb      Type = "web"
+	UITypeTUI      Type = "tui"
 )
 
-type StyleOption func(s *ComputedStyle)
-
-func Foreground(color ColorValue) StyleOption {
-	return func(s *ComputedStyle) {
-		s.Foreground = color
+// Implement pflag.Value for UIType
+func (u *Type) Set(s string) error {
+	switch s {
+	case "terminal", "web", "tui":
+		*u = Type(s)
+		return nil
+	default:
+		return fmt.Errorf("invalid UI type: %s", s)
 	}
 }
 
-func RenderMarkdown() StyleOption {
-	return func(s *ComputedStyle) {
-		s.RenderMarkdown = true
-	}
+func (u *Type) String() string {
+	return string(*u)
 }
 
-type CanFormatAsHTML interface {
-	FormatAsHTML() template.HTML
+func (u *Type) Type() string {
+	return "UIType"
 }

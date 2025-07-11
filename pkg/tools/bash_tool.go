@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"html/template"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,7 +27,6 @@ import (
 	"time"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
-	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/ui"
 	"k8s.io/klog/v2"
 )
 
@@ -128,7 +126,7 @@ func (t *BashTool) Run(ctx context.Context, args map[string]any) (any, error) {
 		cmd.Env = append(cmd.Env, "KUBECONFIG="+kubeconfig)
 	}
 
-	return executeCommand(cmd)
+	return executeCommand(ctx, cmd)
 }
 
 type ExecResult struct {
@@ -142,12 +140,6 @@ type ExecResult struct {
 
 func (e *ExecResult) String() string {
 	return fmt.Sprintf("Command: %q\nError: %q\nStdout: %q\nStderr: %q\nExitCode: %d\nStreamType: %q}", e.Command, e.Error, e.Stdout, e.Stderr, e.ExitCode, e.StreamType)
-}
-
-var _ ui.CanFormatAsHTML = &ExecResult{}
-
-func (e *ExecResult) FormatAsHTML() template.HTML {
-	return template.HTML("<pre><code>" + template.HTMLEscapeString(e.Stdout) + "</code></pre>")
 }
 
 func IsInteractiveCommand(command string) (bool, error) {
@@ -171,7 +163,7 @@ func IsInteractiveCommand(command string) (bool, error) {
 	return false, nil
 }
 
-func executeCommand(cmd *exec.Cmd) (*ExecResult, error) {
+func executeCommand(ctx context.Context, cmd *exec.Cmd) (*ExecResult, error) {
 	command := strings.Join(cmd.Args, " ")
 
 	if isInteractive, err := IsInteractiveCommand(command); isInteractive {
@@ -185,7 +177,7 @@ func executeCommand(cmd *exec.Cmd) (*ExecResult, error) {
 	// Handle streaming commands
 	if isWatch || isLogs || isAttach {
 		// Create a context with timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
+		timeoutCtx, cancel := context.WithTimeout(ctx, 7*time.Second)
 		defer cancel()
 
 		// Create pipes for stdout and stderr
@@ -238,7 +230,7 @@ func executeCommand(cmd *exec.Cmd) (*ExecResult, error) {
 
 		// Wait for either timeout or command completion
 		select {
-		case <-ctx.Done():
+		case <-timeoutCtx.Done():
 			isTimeout = true
 			// Kill the process immediately on timeout
 			if cmd.Process != nil {
