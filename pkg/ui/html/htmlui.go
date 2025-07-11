@@ -15,48 +15,109 @@
 package html
 
 import (
-	"bytes"
 	"context"
+	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
+	"strconv"
+	"sync"
 	"time"
 
+	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/agent"
+	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/api"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/journal"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/ui"
-	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/ui/html/templates"
 	"github.com/charmbracelet/glamour"
+	"golang.org/x/sync/errgroup"
 	"k8s.io/klog/v2"
 )
+
+// Broadcaster manages a set of clients for Server-Sent Events.
+type Broadcaster struct {
+	clients   map[chan []byte]bool
+	newClient chan chan []byte
+	delClient chan chan []byte
+	messages  chan []byte
+	mu        sync.Mutex
+}
+
+// NewBroadcaster creates a new Broadcaster instance.
+func NewBroadcaster() *Broadcaster {
+	b := &Broadcaster{
+		clients:   make(map[chan []byte]bool),
+		newClient: make(chan (chan []byte)),
+		delClient: make(chan (chan []byte)),
+		messages:  make(chan []byte, 10),
+	}
+	return b
+}
+
+// Run starts the broadcaster's event loop.
+func (b *Broadcaster) Run(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case client := <-b.newClient:
+			b.mu.Lock()
+			b.clients[client] = true
+			b.mu.Unlock()
+		case client := <-b.delClient:
+			b.mu.Lock()
+			delete(b.clients, client)
+			close(client)
+			b.mu.Unlock()
+		case msg := <-b.messages:
+			b.mu.Lock()
+			for client := range b.clients {
+				select {
+				case client <- msg:
+				default:
+					klog.Warning("SSE client buffer full, dropping message.")
+				}
+			}
+			b.mu.Unlock()
+		}
+	}
+}
+
+// Broadcast sends a message to all connected clients.
+func (b *Broadcaster) Broadcast(msg []byte) {
+	b.messages <- msg
+}
 
 type HTMLUserInterface struct {
 	httpServer         *http.Server
 	httpServerListener net.Listener
 
-	doc              *ui.Document
+	agent            *agent.Agent
 	journal          journal.Recorder
 	markdownRenderer *glamour.TermRenderer
+	broadcaster      *Broadcaster
 }
 
 var _ ui.UI = &HTMLUserInterface{}
 
-func NewHTMLUserInterface(doc *ui.Document, listenAddress string, journal journal.Recorder) (*HTMLUserInterface, error) {
+func NewHTMLUserInterface(agent *agent.Agent, listenAddress string, journal journal.Recorder) (*HTMLUserInterface, error) {
 	mux := http.NewServeMux()
+
+	u := &HTMLUserInterface{
+		agent:       agent,
+		journal:     journal,
+		broadcaster: NewBroadcaster(),
+	}
+
 	httpServer := &http.Server{
 		Addr:    listenAddress,
 		Handler: mux,
 	}
 
-	u := &HTMLUserInterface{
-		doc:     doc,
-		journal: journal,
-	}
-
 	mux.HandleFunc("GET /", u.serveIndex)
-	mux.HandleFunc("GET /doc-stream", u.serveDocStream)
+	mux.HandleFunc("GET /messages-stream", u.serveMessagesStream)
 	mux.HandleFunc("POST /send-message", u.handlePOSTSendMessage)
 	mux.HandleFunc("POST /choose-option", u.handlePOSTChooseOption)
 
@@ -83,26 +144,108 @@ func NewHTMLUserInterface(doc *ui.Document, listenAddress string, journal journa
 	return u, nil
 }
 
-func (u *HTMLUserInterface) RunServer(ctx context.Context) error {
-	go func() {
-		<-ctx.Done()
-		u.httpServerListener.Close()
-	}()
-	return u.httpServer.Serve(u.httpServerListener)
+func (u *HTMLUserInterface) Run(ctx context.Context) error {
+	g, gctx := errgroup.WithContext(ctx)
+
+	// Start the broadcaster
+	g.Go(func() error {
+		u.broadcaster.Run(gctx)
+		return nil
+	})
+
+	// This goroutine listens to agent output and broadcasts it.
+	g.Go(func() error {
+		for {
+			select {
+			case <-gctx.Done():
+				return nil
+			case _, ok := <-u.agent.Output:
+				if !ok {
+					return nil // Channel closed
+				}
+				// We received a message from the agent. It's a signal that
+				// the state has changed. We fetch the entire current state and
+				// broadcast it to all connected clients.
+				jsonData, err := u.getCurrentStateJSON()
+				if err != nil {
+					// Don't return an error, just log it and continue
+					klog.Errorf("Error marshaling state for broadcast: %v", err)
+					continue
+				}
+				u.broadcaster.Broadcast(jsonData)
+			}
+		}
+	})
+
+	g.Go(func() error {
+		if err := u.httpServer.Serve(u.httpServerListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("error running http server: %w", err)
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		<-gctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := u.httpServer.Shutdown(shutdownCtx); err != nil {
+			klog.Errorf("HTTP server shutdown error: %v", err)
+		}
+		return nil
+	})
+
+	return g.Wait()
 }
 
+//go:embed index.html
+var indexHTML []byte
+
 func (u *HTMLUserInterface) serveIndex(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "text/html")
+	w.Write(indexHTML)
+}
+
+func (u *HTMLUserInterface) serveMessagesStream(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	log := klog.FromContext(ctx)
 
-	var bb bytes.Buffer
-	if err := renderTemplate(ctx, &bb, "index.html", nil); err != nil {
-		log.Error(err, "rendering index.html")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
 		return
 	}
 
-	w.Write(bb.Bytes())
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	clientChan := make(chan []byte, 10)
+	u.broadcaster.newClient <- clientChan
+	defer func() {
+		u.broadcaster.delClient <- clientChan
+	}()
+
+	log.Info("SSE client connected")
+
+	// Immediately send the current state to the new client
+	initialData, err := u.getCurrentStateJSON()
+	if err != nil {
+		log.Error(err, "getting initial state for SSE client")
+	} else {
+		fmt.Fprintf(w, "data: %s\n\n", initialData)
+		flusher.Flush()
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info("SSE client disconnected")
+			return
+		case msg := <-clientChan:
+			fmt.Fprintf(w, "data: %s\n\n", msg)
+			flusher.Flush()
+		}
+	}
 }
 
 func (u *HTMLUserInterface) handlePOSTSendMessage(w http.ResponseWriter, req *http.Request) {
@@ -123,26 +266,30 @@ func (u *HTMLUserInterface) handlePOSTSendMessage(w http.ResponseWriter, req *ht
 		return
 	}
 
-	// TODO: Match by block id
-	var inputBlock *ui.InputTextBlock
-	for _, block := range u.doc.Blocks() {
-		if block, ok := block.(*ui.InputTextBlock); ok {
-			inputBlock = block
+	// Send the message to the agent
+	u.agent.Input <- &api.UserInputResponse{Query: q}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (u *HTMLUserInterface) getCurrentStateJSON() ([]byte, error) {
+	allMessages := u.agent.Session().AllMessages()
+	// Create a copy of the messages to avoid race conditions
+	var messages []*api.Message
+	for _, message := range allMessages {
+		if message.Type == api.MessageTypeUserInputRequest && message.Payload == ">>>" {
+			continue
 		}
+		messages = append(messages, message)
 	}
 
-	if inputBlock == nil {
-		log.Info("no input block found")
-		http.Error(w, "no input block found", http.StatusInternalServerError)
-		return
+	agentState := u.agent.Session().AgentState
+
+	data := map[string]interface{}{
+		"messages":   messages,
+		"agentState": agentState,
 	}
-
-	inputBlock.Observable().Set(q, nil)
-	inputBlock.SetEditable(false)
-
-	var bb bytes.Buffer
-	bb.WriteString("ok")
-	w.Write(bb.Bytes())
+	return json.Marshal(data)
 }
 
 func (u *HTMLUserInterface) handlePOSTChooseOption(w http.ResponseWriter, req *http.Request) {
@@ -157,129 +304,22 @@ func (u *HTMLUserInterface) handlePOSTChooseOption(w http.ResponseWriter, req *h
 
 	log.Info("got request", "values", req.Form)
 
-	optionKey := req.FormValue("option")
-	if optionKey == "" {
-		http.Error(w, "missing option", http.StatusBadRequest)
+	choice := req.FormValue("choice")
+	if choice == "" {
+		http.Error(w, "missing choice", http.StatusBadRequest)
 		return
 	}
 
-	// TODO: Match by block id
-	var inputOptionBlock *ui.InputOptionBlock
-	for _, block := range u.doc.Blocks() {
-		if block, ok := block.(*ui.InputOptionBlock); ok {
-			inputOptionBlock = block
-		}
-	}
-
-	if inputOptionBlock == nil {
-		log.Info("no input option lock found")
-		http.Error(w, "no input option block found", http.StatusInternalServerError)
-		return
-	}
-
-	foundOption := false
-	for _, option := range inputOptionBlock.Options {
-		if option.Key == optionKey {
-			inputOptionBlock.Selection().Set(option.Key, nil)
-			foundOption = true
-			break
-		}
-	}
-
-	if !foundOption {
-		log.Info("option not found", "option", optionKey)
-		http.Error(w, "option not found", http.StatusBadRequest)
-	}
-
-	var bb bytes.Buffer
-	bb.WriteString("ok")
-	w.Write(bb.Bytes())
-}
-
-func (u *HTMLUserInterface) serveDocStream(w http.ResponseWriter, req *http.Request) {
-	ctx := req.Context()
-	log := klog.FromContext(ctx)
-
-	log.Info("in serverDocStream")
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	rc := http.NewResponseController(w)
-
-	sendAllBlocks := func() {
-		var sse bytes.Buffer
-		sse.WriteString("event: ReplaceAll\ndata: ")
-
-		blocks := u.doc.Blocks()
-		var html bytes.Buffer
-		for _, block := range blocks {
-			if err := u.renderBlock(ctx, &html, block); err != nil {
-				log.Error(err, "rendering block")
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
-
-		for i, line := range bytes.Split(html.Bytes(), []byte("\n")) {
-			if i != 0 {
-				sse.WriteString("data: ")
-			}
-			sse.Write(line)
-			sse.WriteString("\n")
-		}
-		sse.WriteString("\n")
-		w.Write(sse.Bytes())
-		log.V(6).Info("writing SSE", "data", sse.String())
-		rc.Flush()
-	}
-
-	onDocChange := func(doc *ui.Document, block ui.Block) {
-		sendAllBlocks()
-	}
-
-	subscription := u.doc.AddSubscription(ui.SubscriberFromFunc(onDocChange))
-	defer subscription.Close()
-
-	// Send initial message
-	sendAllBlocks()
-
-	clientGone := req.Context().Done()
-
-	keepAliveTimer := time.NewTicker(5 * time.Second)
-	defer keepAliveTimer.Stop()
-
-	for {
-		select {
-		case <-clientGone:
-			// client disconnected
-			return
-		case <-keepAliveTimer.C:
-			// Send a ping
-			log.V(6).Info("sending SSE ping")
-			if _, err := fmt.Fprintf(w, "event: Ping\ndata: {}\n\n"); err != nil {
-				return
-			}
-			if err := rc.Flush(); err != nil {
-				return
-			}
-		}
-	}
-}
-
-func renderTemplate(ctx context.Context, w io.Writer, key string, data any) error {
-	log := klog.FromContext(ctx)
-	tmpl, err := templates.LoadTemplate(key)
+	choiceIndex, err := strconv.Atoi(choice)
 	if err != nil {
-		return fmt.Errorf("loading template %q: %w", key, err)
-	}
-	if err := tmpl.Execute(w, data); err != nil {
-		return fmt.Errorf("executing %q: %w", key, err)
+		http.Error(w, "invalid choice", http.StatusBadRequest)
+		return
 	}
 
-	log.V(8).Info("rendered template", "key", key)
-	return nil
+	// Send the choice to the agent
+	u.agent.Input <- &api.UserChoiceResponse{Choice: choiceIndex}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func (u *HTMLUserInterface) Close() error {
@@ -294,25 +334,6 @@ func (u *HTMLUserInterface) Close() error {
 	return errors.Join(errs...)
 }
 
-func (u *HTMLUserInterface) renderBlock(ctx context.Context, w io.Writer, block ui.Block) error {
-	switch block := block.(type) {
-	case *ui.ErrorBlock:
-		return renderTemplate(ctx, w, "error_block.html", block)
-	case *ui.FunctionCallRequestBlock:
-		return renderTemplate(ctx, w, "function_call_request_block.html", block)
-	case *ui.AgentTextBlock:
-		return renderTemplate(ctx, w, "agent_text_block.html", block)
-	case *ui.InputTextBlock:
-		return renderTemplate(ctx, w, "input_text_block.html", block)
-	case *ui.InputOptionBlock:
-		return renderTemplate(ctx, w, "input_option_block.html", block)
-
-	default:
-		return fmt.Errorf("unknown block type %T", block)
-	}
-}
-
 func (u *HTMLUserInterface) ClearScreen() {
-	// TODO: Do we need this?
-	// fmt.Print("\033[H\033[2J")
+	// Not applicable for HTML UI
 }

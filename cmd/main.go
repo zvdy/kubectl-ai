@@ -33,7 +33,6 @@ import (
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/agent"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/journal"
-	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/mcp"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/tools"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/ui"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/ui/html"
@@ -106,39 +105,13 @@ type Options struct {
 	RemoveWorkDir          bool     `json:"removeWorkDir,omitempty"`
 	ToolConfigPaths        []string `json:"toolConfigPaths,omitempty"`
 
-	// UserInterface is the type of user interface to use.
-	UserInterface UserInterface `json:"userInterface,omitempty"`
-	// UIListenAddress is the address to listen for the HTML UI.
+	// UIType is the type of user interface to use.
+	UIType ui.Type `json:"uiType,omitempty"`
+	// UIListenAddress is the address to listen for the web UI.
 	UIListenAddress string `json:"uiListenAddress,omitempty"`
 
 	// SkipVerifySSL is a flag to skip verifying the SSL certificate of the LLM provider.
 	SkipVerifySSL bool `json:"skipVerifySSL,omitempty"`
-}
-
-type UserInterface string
-
-const (
-	UserInterfaceTerminal UserInterface = "terminal"
-	UserInterfaceHTML     UserInterface = "html"
-)
-
-// Implement pflag.Value for UserInterface
-func (u *UserInterface) Set(s string) error {
-	switch s {
-	case "terminal", "html":
-		*u = UserInterface(s)
-		return nil
-	default:
-		return fmt.Errorf("invalid user interface: %s", s)
-	}
-}
-
-func (u *UserInterface) String() string {
-	return string(*u)
-}
-
-func (u *UserInterface) Type() string {
-	return "UserInterface"
 }
 
 var defaultToolConfigPaths = []string{
@@ -173,7 +146,7 @@ func (o *Options) InitDefaults() {
 	o.RemoveWorkDir = false
 	o.ToolConfigPaths = defaultToolConfigPaths
 	// Default to terminal UI
-	o.UserInterface = UserInterfaceTerminal
+	o.UIType = ui.UITypeTerminal
 	// Default UI listen address for HTML UI
 	o.UIListenAddress = "localhost:8888"
 
@@ -228,22 +201,31 @@ func (o *Options) LoadConfigurationFile() error {
 }
 
 func main() {
-	ctx := context.Background()
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 
 	go func() {
-		sig := <-sigCh
+		<-ctx.Done()
+		// restore default behavior for a second signal
+		signal.Stop(make(chan os.Signal))
+		cancel()
 		klog.Flush()
-		fmt.Fprintf(os.Stderr, "Received signal, shutting down... %s\n", sig)
-		os.Exit(0)
+		fmt.Fprintf(os.Stderr, "\nReceived signal, shutting down gracefully... (press Ctrl+C again to force)\n")
 	}()
 
 	if err := run(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		// Don't print error if it's a context cancellation
+		if !errors.Is(err, context.Canceled) {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		// Exit with non-zero status code on error, unless it's a graceful shutdown.
+		if errors.Is(err, context.Canceled) {
+			fmt.Fprintln(os.Stderr, "\nGoodbye!")
+			os.Exit(0)
+		}
 		os.Exit(1)
 	}
+	fmt.Fprintln(os.Stderr, "Goodbye!")
 }
 
 func run(ctx context.Context) error {
@@ -305,7 +287,7 @@ func (opt *Options) bindCLIFlags(f *pflag.FlagSet) error {
 	f.BoolVar(&opt.EnableToolUseShim, "enable-tool-use-shim", opt.EnableToolUseShim, "enable tool use shim")
 	f.BoolVar(&opt.Quiet, "quiet", opt.Quiet, "run in non-interactive mode, requires a query to be provided as a positional argument")
 
-	f.Var(&opt.UserInterface, "user-interface", "user interface mode to use. Supported values: terminal, html.")
+	f.Var(&opt.UIType, "ui-type", "user interface type to use. Supported values: terminal, web, tui.")
 	f.StringVar(&opt.UIListenAddress, "ui-listen-address", opt.UIListenAddress, "address to listen for the HTML UI.")
 	f.BoolVar(&opt.SkipVerifySSL, "skip-verify-ssl", opt.SkipVerifySSL, "skip verifying the SSL certificate of the LLM provider")
 
@@ -334,19 +316,6 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 
 	if err := handleCustomTools(opt.ToolConfigPaths); err != nil {
 		return fmt.Errorf("failed to process custom tools: %w", err)
-	}
-
-	// Initialize MCP client if requested
-	var mcpManager *mcp.Manager
-	if opt.MCPClient {
-		var err error
-		mcpManager, err = InitializeMCPClient()
-		if err != nil {
-			klog.Errorf("Failed to initialize MCP client: %v", err)
-			os.Exit(1) // Fail fast instead of continuing with degraded functionality
-		} else {
-			klog.V(1).Info("MCP client initialization completed successfully")
-		}
 	}
 
 	// After reading stdin, it is consumed
@@ -391,42 +360,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		defer recorder.Close()
 	}
 
-	doc := ui.NewDocument()
-
-	var userInterface ui.UI
-	switch opt.UserInterface {
-	case UserInterfaceTerminal:
-		// since stdin is already consumed, we use TTY for taking input from user
-		useTTYForInput := hasInputData
-
-		var u ui.UI
-		u, err = ui.NewTerminalUI(doc, recorder, useTTYForInput)
-		if err != nil {
-			return err
-		}
-		userInterface = u
-
-	case UserInterfaceHTML:
-		var u ui.UI
-		u, err = html.NewHTMLUserInterface(doc, opt.UIListenAddress, recorder)
-		if err != nil {
-			return err
-		}
-		// Only run server if the UI is actually an HTML UI
-		if htmlUI, ok := u.(*html.HTMLUserInterface); ok {
-			go func() {
-				if err := htmlUI.RunServer(ctx); err != nil {
-					klog.Fatalf("error running http server: %v", err)
-				}
-			}()
-		}
-		userInterface = u
-
-	default:
-		return fmt.Errorf("user-interface mode %q is not known", opt.UserInterface)
-	}
-
-	conversation := &agent.Conversation{
+	k8sAgent := &agent.Agent{
 		Model:              opt.ModelID,
 		Kubeconfig:         opt.KubeConfigPath,
 		LLM:                llmClient,
@@ -439,45 +373,37 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		SkipPermissions:    opt.SkipPermissions,
 		EnableToolUseShim:  opt.EnableToolUseShim,
 		MCPClientEnabled:   opt.MCPClient,
+		RunOnce:            opt.Quiet,
+		InitialQuery:       queryFromCmd,
 	}
 
-	err = conversation.Init(ctx, doc)
+	err = k8sAgent.Init(ctx)
 	if err != nil {
-		return fmt.Errorf("starting conversation: %w", err)
+		return fmt.Errorf("starting k8s agent: %w", err)
 	}
-	defer conversation.Close()
+	defer k8sAgent.Close()
 
-	chatSession := session{
-		model:        opt.ModelID,
-		doc:          doc,
-		ui:           userInterface,
-		conversation: conversation,
-		LLM:          llmClient,
-		mcpManager:   mcpManager,
-	}
-
-	// Prepare MCP server status blocks only when MCP client is enabled
-	var mcpBlocks []ui.Block
-	if opt.MCPClient {
-		if blocks, err := GetMCPServerStatusWithClientMode(opt.MCPClient, mcpManager); err == nil && len(blocks) > 0 {
-			header := ui.NewAgentTextBlock().WithText("\nMCP Server Status:")
-			mcpBlocks = append(mcpBlocks, header)
-			mcpBlocks = append(mcpBlocks, blocks...)
-			// Log MCP server status to log file
-			klog.Info("MCP server status retrieved successfully for REPL startup")
-		} else if err != nil {
-			klog.Warningf("Failed to retrieve MCP server status for REPL startup: %v", err)
+	var userInterface ui.UI
+	switch opt.UIType {
+	case ui.UITypeTerminal:
+		// since stdin is already consumed, we use TTY for taking input from user
+		useTTYForInput := hasInputData
+		userInterface, err = ui.NewTerminalUI(k8sAgent, useTTYForInput, recorder)
+		if err != nil {
+			return fmt.Errorf("creating terminal UI: %w", err)
 		}
-	}
-
-	if opt.Quiet {
-		if queryFromCmd == "" {
-			return fmt.Errorf("quiet mode requires a query to be provided as a positional argument")
+	case ui.UITypeWeb:
+		userInterface, err = html.NewHTMLUserInterface(k8sAgent, opt.UIListenAddress, recorder)
+		if err != nil {
+			return fmt.Errorf("creating web UI: %w", err)
 		}
-		return chatSession.answerQuery(ctx, queryFromCmd)
+	case ui.UITypeTUI:
+		userInterface = ui.NewTUI(k8sAgent)
+	default:
+		return fmt.Errorf("user-interface mode %q is not known", opt.UIType)
 	}
 
-	return chatSession.repl(ctx, queryFromCmd, mcpBlocks)
+	return repl(ctx, queryFromCmd, userInterface, k8sAgent)
 }
 
 func handleCustomTools(toolConfigPaths []string) error {
@@ -519,114 +445,21 @@ func handleCustomTools(toolConfigPaths []string) error {
 	return nil
 }
 
-// session represents the user chat session (interactive/non-interactive both)
-type session struct {
-	model           string
-	ui              ui.UI
-	doc             *ui.Document
-	conversation    *agent.Conversation
-	availableModels []string
-	LLM             gollm.Client
-	mcpManager      *mcp.Manager
-}
-
 // repl is a read-eval-print loop for the chat session.
-func (s *session) repl(ctx context.Context, initialQuery string, initialBlocks []ui.Block) error {
-	for _, block := range initialBlocks {
-		s.doc.AddBlock(block)
-	}
+func repl(ctx context.Context, initialQuery string, ui ui.UI, agent *agent.Agent) error {
 	query := initialQuery
-	if query == "" {
-		s.doc.AddBlock(ui.NewAgentTextBlock().WithText("Hey there, what can I help you with today?"))
+	// Note: Initial greeting and MCP status are now handled by the agent itself
+	// through the message-based system
+	err := agent.Run(ctx, query)
+	if err != nil {
+		return fmt.Errorf("running agent: %w", err)
 	}
-	for {
-		if query == "" {
-			input := ui.NewInputTextBlock()
-			input.SetEditable(true)
-			s.doc.AddBlock(input)
 
-			userInput, err := input.Observable().Wait()
-			if err != nil {
-				if err == io.EOF {
-					// Use hit control-D, or was piping and we reached the end of stdin.
-					// Not a "big" problem
-					return nil
-				}
-				return fmt.Errorf("reading input: %w", err)
-			}
-			query = strings.TrimSpace(userInput)
-		}
-
-		switch {
-		case query == "":
-			continue
-		case query == "reset":
-			err := s.conversation.Init(ctx, s.doc)
-			if err != nil {
-				return err
-			}
-		case query == "clear":
-			s.ui.ClearScreen()
-		case query == "exit" || query == "quit":
-			// s.ui.RenderOutput(ctx, "Alright...bye.\n")
-			return nil
-		default:
-			if err := s.answerQuery(ctx, query); err != nil {
-				errorBlock := &ui.ErrorBlock{}
-				errorBlock.SetText(fmt.Sprintf("Error: %v\n", err))
-				s.doc.AddBlock(errorBlock)
-			}
-		}
-		// Reset query to empty string so that we prompt for input again
-		query = ""
+	err = ui.Run(ctx)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("running UI: %w", err)
 	}
-}
 
-func (s *session) listModels(ctx context.Context) ([]string, error) {
-	if s.availableModels == nil {
-		modelNames, err := s.LLM.ListModels(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("listing models: %w", err)
-		}
-		s.availableModels = modelNames
-	}
-	return s.availableModels, nil
-}
-
-func (s *session) answerQuery(ctx context.Context, query string) error {
-	switch {
-	case query == "model":
-		infoBlock := &ui.AgentTextBlock{}
-		infoBlock.AppendText(fmt.Sprintf("Current model is `%s`\n", s.model))
-		s.doc.AddBlock(infoBlock)
-
-	case query == "version":
-		infoBlock := &ui.AgentTextBlock{}
-		infoBlock.AppendText(fmt.Sprintf("Version: `%s`\n", version))
-		s.doc.AddBlock(infoBlock)
-
-	case query == "models":
-		models, err := s.listModels(ctx)
-		if err != nil {
-			return fmt.Errorf("listing models: %w", err)
-		}
-		infoBlock := &ui.AgentTextBlock{}
-		infoBlock.AppendText("\n  Available models:\n")
-		infoBlock.AppendText(strings.Join(models, "\n"))
-		s.doc.AddBlock(infoBlock)
-
-	case query == "tools":
-		if s.conversation == nil {
-			return fmt.Errorf("listing tols: conversation is not initialized")
-		}
-		infoBlock := &ui.AgentTextBlock{}
-		infoBlock.AppendText("\n  Available tools:\n")
-		infoBlock.AppendText(strings.Join(s.conversation.Tools.Names(), "\n"))
-		s.doc.AddBlock(infoBlock)
-
-	default:
-		return s.conversation.RunOneRound(ctx, query)
-	}
 	return nil
 }
 
