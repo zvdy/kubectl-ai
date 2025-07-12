@@ -245,6 +245,7 @@ func TestKubectlCommandParsing(t *testing.T) {
 		// Complex scenarios
 		{"long path", "/very/long/path/to/kubectl get pods", "no", "very long path"},
 		{"flags before verb", "kubectl --context=prod --namespace=app get pods", "unknown", "global flags before verb"},
+		{"flags before verb without equals", "kubectl --context prod --namespace app get pods", "unknown", "global flags before verb without equals"},
 		{"no verb", "kubectl --help", "unknown", "kubectl with only flags"},
 
 		// Dry run scenarios
