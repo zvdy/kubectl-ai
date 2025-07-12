@@ -18,26 +18,22 @@ spec:
         image: kubectl-ai:latest
         args:
         - --ui-type=web
-        envFrom:
-        - secretRef:
-            name: kubectl-ai
----
-
-kind: Secret
-apiVersion: v1
-metadata:
-  name: kubectl-ai
-  labels:
-    app: kubectl-ai
-type: Opaque
-
+        - --llm-provider=vertexai
+        - --v=4
+        - --alsologtostderr
+        env:
+        - name: GOOGLE_CLOUD_PROJECT
+          value: "PROJECT_ID"
+        - name: GOOGLE_CLOUD_LOCATION
+          value: "global"
+        # Vertex AI authentication will be handled via Workload Identity Federation
 ---
 
 kind: ServiceAccount
 apiVersion: v1
 metadata:
   name: kubectl-ai
-
+  # Using GKE Workload Identity Federation - no GSA impersonation needed
 ---
 
 apiVersion: rbac.authorization.k8s.io/v1
@@ -66,4 +62,4 @@ spec:
   ports:
   - port: 80
     targetPort: 8888
-    protocol: TCP
+    protocol: TCP 
