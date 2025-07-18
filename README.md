@@ -311,9 +311,10 @@ docker build -t kubectl-ai:latest -f images/kubectl-ai/Dockerfile .
 ```
 
 #### Step 2: Connect to Your GKE Cluster
-Grab credentails for your cluster using the following command
+Grab credentails for your cluster using the following commands
 ```bash
-gcloud containter clusters get-credentials <cluster-name> --zone <zone>
+gcloud auth login
+gcloud container clusters get-credentials <cluster-name> --zone <zone>
 ```
 
 #### Step 3: Run the kubectl-ai container
@@ -323,8 +324,7 @@ Below is a sample command that can be used to launch the container with a locall
 docker run --rm -it \
   -p 8080:8080 \
   -v ~/.kube:/root/.kube:ro \
-  -e GOOGLE_CLOUD_PROJECT="YOUR_GCP_PROJECT_ID" \
-  -e GOOGLE_CLOUD_LOCATION="YOUR_GCP_LOCATION" \
+  -v ~/.config/gcloud:/root/.config/gcloud
   kubectl-ai:latest \
   --llm-provider vertexai \
   --ui-listen-address 0.0.0.0:8080 \

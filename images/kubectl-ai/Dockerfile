@@ -1,6 +1,5 @@
-ARG GO_VERSION=1.24.3
-ARG KUBECTL_VERSION=v1.33.0
-ARG GCLOUD_CLI_VERSION=530.0.0-stable
+ARG GO_VERSION="1.24.3"
+ARG GCLOUD_CLI_VERSION="530.0.0-stable"
 
 FROM golang:${GO_VERSION}-bookworm as builder
 
@@ -14,10 +13,11 @@ COPY pkg/ ./pkg/
 
 RUN CGO_ENABLED=0 go build -o kubectl-ai ./cmd/
 FROM debian:bookworm-slim AS kubectl-tool
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl ca-certificates && \
     mkdir -p /opt/tools/kubectl/bin/ && \
-    curl -L "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /opt/tools/kubectl/bin/kubectl && \
+    curl -v -L "https://dl.k8s.io/release/v1.33.0/bin/linux/amd64/kubectl" -o /opt/tools/kubectl/bin/kubectl && \
     chmod +x /opt/tools/kubectl/bin/kubectl && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
