@@ -295,6 +295,42 @@ A custom tool definition for `helm` could look like the following example:
     Use `helm --help` or `helm <subcommand> --help` to see full syntax, available flags, and examples for each command.
 ```
 
+## Docker Quick Start 
+This project provides a Docker image that gives you a standalone environment for running kubectl-ai, including against a GKE cluster.
+
+### Running the container against GKE
+
+#### Step 1: Build the Image
+
+Clone the repository and build the image with the following command 
+
+```bash
+git clone https://github.com/GoogleCloudPlatform/kubectl-ai.git
+cd kubectl-ai
+docker build -t kubectl-ai:latest -f images/kubectl-ai/Dockerfile .
+```
+
+#### Step 2: Connect to Your GKE Cluster
+Grab credentails for your cluster using the following command
+```bash
+gcloud containter clusters get-credentials <cluster-name> --zone <zone>
+```
+
+#### Step 3: Run the kubectl-ai container
+Below is a sample command that can be used to launch the container with a locally hosted web-ui. Be sure to replace the placeholder values with your specific Google Cloud project ID and location.
+
+```bash
+docker run --rm -it \
+  -p 8080:8080 \
+  -v ~/.kube:/root/.kube:ro \
+  -e GOOGLE_CLOUD_PROJECT="YOUR_GCP_PROJECT_ID" \
+  -e GOOGLE_CLOUD_LOCATION="YOUR_GCP_LOCATION" \
+  kubectl-ai:latest \
+  --llm-provider vertexai \
+  --ui-listen-address 0.0.0.0:8080 \
+  --ui-type web
+```
+
 ## MCP Client Mode
 
 > **Note:** MCP Client Mode is available in `kubectl-ai` version v0.0.12 and onwards.
