@@ -170,8 +170,9 @@ func NewVertexAIClient(ctx context.Context, opt VertexAIClientOptions) (*GoogleA
 	}
 
 	client, err := genai.NewClient(ctx, cc)
+
 	if err != nil {
-		return nil, fmt.Errorf("building gemini client: %w", err)
+		return nil, fmt.Errorf("building vertexai client: %w", err)
 	}
 
 	return &GoogleAIClient{
@@ -446,6 +447,13 @@ func (c *GeminiChat) SendStreaming(ctx context.Context, contents ...any) (ChatRe
 			if !ok {
 				return
 			}
+
+			if err != nil {
+				// Always check for and yield an error first.
+				yield(nil, err)
+				return
+			}
+
 			if geminiResponse == nil || len(geminiResponse.Candidates) == 0 {
 				return
 			}
