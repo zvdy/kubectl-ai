@@ -1,7 +1,7 @@
 ARG GO_VERSION="1.24.3"
 ARG GCLOUD_CLI_VERSION="530.0.0-stable"
 
-FROM golang:${GO_VERSION}-bookworm as builder
+FROM golang:${GO_VERSION}-bookworm AS builder
 
 WORKDIR /src
 COPY go.mod go.sum ./
