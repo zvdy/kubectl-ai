@@ -219,6 +219,18 @@ func (s *Agent) Init(ctx context.Context) error {
 		},
 	)
 
+	if s.MCPClientEnabled {
+		if err := s.InitializeMCPClient(ctx); err != nil {
+			klog.Errorf("Failed to initialize MCP client: %v", err)
+			return fmt.Errorf("failed to initialize MCP client: %w", err)
+		}
+
+		// Update MCP status in session
+		if err := s.UpdateMCPStatus(ctx, s.MCPClientEnabled); err != nil {
+			klog.Warningf("Failed to update MCP status: %v", err)
+		}
+	}
+
 	if !s.EnableToolUseShim {
 		var functionDefinitions []*gollm.FunctionDefinition
 		for _, tool := range s.Tools.AllTools() {
@@ -233,19 +245,6 @@ func (s *Agent) Init(ctx context.Context) error {
 		}
 	}
 	s.workDir = workDir
-
-	// Initialize MCP client if enabled
-	if s.MCPClientEnabled {
-		if err := s.InitializeMCPClient(ctx); err != nil {
-			klog.Errorf("Failed to initialize MCP client: %v", err)
-			return fmt.Errorf("failed to initialize MCP client: %w", err)
-		}
-
-		// Update MCP status in session
-		if err := s.UpdateMCPStatus(ctx, s.MCPClientEnabled); err != nil {
-			klog.Warningf("Failed to update MCP status: %v", err)
-		}
-	}
 
 	return nil
 }
