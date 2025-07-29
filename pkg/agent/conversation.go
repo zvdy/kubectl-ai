@@ -377,6 +377,7 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 							c.setAgentState(api.AgentStateDone)
 							c.pendingFunctionCalls = []ToolCallAnalysis{}
 							c.session.LastModified = time.Now()
+							c.addMessage(api.MessageSourceAgent, api.MessageTypeError, "Error: "+err.Error())
 							// In RunOnce mode, exit on tool execution error
 							if c.RunOnce {
 								c.setAgentState(api.AgentStateExited)
@@ -666,8 +667,10 @@ func (c *Agent) DispatchToolCalls(ctx context.Context) error {
 			Kubeconfig: c.Kubeconfig,
 			WorkDir:    c.workDir,
 		})
+
 		if err != nil {
 			log.Error(err, "error executing action", "output", output)
+			c.addMessage(api.MessageSourceAgent, api.MessageTypeToolCallResponse, err.Error())
 			return err
 		}
 
