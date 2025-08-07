@@ -69,7 +69,7 @@ nix-shell -p kubectl-ai
 
 ### Usage
 
-`kubectl-ai` supports AI models from `gemini`, `vertexai`, `azopenai`, `openai`, `grok` and local LLM providers such as `ollama` and `llama.cpp`.
+`kubectl-ai` supports AI models from `gemini`, `vertexai`, `azopenai`, `openai`, `grok`, `bedrock` and local LLM providers such as `ollama` and `llama.cpp`.
 
 #### Using Gemini (Default)
 
@@ -120,6 +120,32 @@ You can use X.AI's Grok model by setting your X.AI API key:
 export GROK_API_KEY=your_xai_api_key_here
 kubectl-ai --llm-provider=grok --model=grok-3-beta
 ```
+
+#### Using AWS Bedrock
+
+You can use AWS Bedrock Claude models with your AWS credentials:
+
+```bash
+# Configure AWS credentials using AWS SSO
+aws sso login --profile your-profile-name
+# Or use other AWS credential methods (IAM roles, environment variables, etc.)
+
+# Use Claude 4 Sonnet (default)
+kubectl-ai --llm-provider=bedrock --model=us.anthropic.claude-sonnet-4-20250514-v1:0
+
+# Use Claude 3.7 Sonnet
+kubectl-ai --llm-provider=bedrock --model=us.anthropic.claude-3-7-sonnet-20250219-v1:0
+
+# Override model via environment variable
+export BEDROCK_MODEL=us.anthropic.claude-sonnet-4-20250514-v1:0
+kubectl-ai --llm-provider=bedrock
+```
+
+AWS Bedrock uses the standard AWS SDK credential chain, supporting:
+- AWS SSO profiles
+- IAM roles (for EC2/ECS/Lambda)
+- Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+- AWS CLI configuration files
 
 #### Using Azure OpenAI
 
@@ -426,14 +452,22 @@ The enhanced mode provides AI clients with access to both Kubernetes operations 
 
 ## k8s-bench
 
-kubectl-ai project includes [k8s-bench](./k8s-bench/README.md) - a benchmark to evaluate performance of different LLM models on kubernetes related tasks. Here is a summary from our last run:
+kubectl-ai project includes [k8s-bench](./k8s-bench/README.md) - a benchmark to evaluate performance of different LLM models on kubernetes related tasks. 
 
-| Model | Success | Fail |
-|-------|---------|------|
-| gemini-2.5-flash-preview-04-17 | 10 | 0 |
-| gemini-2.5-pro-preview-03-25 | 10 | 0 |
-| gemma-3-27b-it | 8 | 2 |
-| **Total** | 28 | 2 |
+### Latest Benchmark Results (August 2025)
+
+Comprehensive evaluation on identical 10-task Kubernetes benchmark with proper CNI environment:
+
+| Model | Success | Fail | Success Rate |
+|-------|---------|------|--------------|
+| **AWS Bedrock Claude 3.7 Sonnet** | **10** | **0** | **100%** |
+| **AWS Bedrock Claude Sonnet 4** | **9** | **1** | **90%** |
+| gemini-2.5-flash-preview-04-17 | 10 | 0 | 100% |
+| gemini-2.5-pro-preview-03-25 | 10 | 0 | 100% |
+| gemma-3-27b-it | 8 | 2 | 80% |
+
+**Test Environment**: Kind cluster v1.27.3 with Calico CNI (full NetworkPolicy support)  
+**Tasks**: create-pod, create-pod-mount-configmaps, create-pod-resources-limits, create-network-policy, fix-crashloop, fix-image-pull, fix-service-routing, list-images-for-pods, scale-deployment, scale-down-deployment
 
 See [full report](./k8s-bench.md) for more details.
 
