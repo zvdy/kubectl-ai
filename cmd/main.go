@@ -115,6 +115,9 @@ type Options struct {
 
 	// SkipVerifySSL is a flag to skip verifying the SSL certificate of the LLM provider.
 	SkipVerifySSL bool `json:"skipVerifySSL,omitempty"`
+
+	// NoTruncateOutput is a flag to disable truncation of tool output in the terminal UI.
+	NoTruncateOutput bool `json:"noTruncateOutput,omitempty"`
 }
 
 var defaultToolConfigPaths = []string{
@@ -158,6 +161,8 @@ func (o *Options) InitDefaults() {
 	o.MCPServerMode = "stdio"
 	// Default port for SSE endpoint
 	o.SSEndpointPort = 9080
+	// By default, truncate long tool outputs
+	o.NoTruncateOutput = false
 }
 
 func (o *Options) LoadConfiguration(b []byte) error {
@@ -298,6 +303,7 @@ func (opt *Options) bindCLIFlags(f *pflag.FlagSet) error {
 	f.Var(&opt.UIType, "ui-type", "user interface type to use. Supported values: terminal, web, tui.")
 	f.StringVar(&opt.UIListenAddress, "ui-listen-address", opt.UIListenAddress, "address to listen for the HTML UI.")
 	f.BoolVar(&opt.SkipVerifySSL, "skip-verify-ssl", opt.SkipVerifySSL, "skip verifying the SSL certificate of the LLM provider")
+	f.BoolVar(&opt.NoTruncateOutput, "no-truncate-output", opt.NoTruncateOutput, "disable truncation of tool output in the terminal UI")
 
 	return nil
 }
@@ -396,7 +402,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 	case ui.UITypeTerminal:
 		// since stdin is already consumed, we use TTY for taking input from user
 		useTTYForInput := hasInputData
-		userInterface, err = ui.NewTerminalUI(k8sAgent, useTTYForInput, recorder)
+		userInterface, err = ui.NewTerminalUI(k8sAgent, useTTYForInput, opt.NoTruncateOutput, recorder)
 		if err != nil {
 			return fmt.Errorf("creating terminal UI: %w", err)
 		}
