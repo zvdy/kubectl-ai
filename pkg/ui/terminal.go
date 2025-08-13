@@ -267,7 +267,7 @@ func (u *TerminalUI) handleMessage(msg *api.Message) {
 
 		responseText := formatToolCallResponse(output)
 		if !u.noTruncateOutput {
-			responseText = truncateString(responseText, 1000)
+			responseText = truncateString(responseText, 250)
 		}
 		text = fmt.Sprintf("%s\n", responseText)
 	case api.MessageTypeUserInputRequest:
