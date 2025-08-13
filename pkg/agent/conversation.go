@@ -703,29 +703,37 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 		if err != nil {
 			return "", false, fmt.Errorf("failed to create session manager: %w", err)
 		}
+
 		sessionList, err := manager.ListSessions()
 		if err != nil {
 			return "", false, fmt.Errorf("failed to list sessions: %w", err)
 		}
 		if len(sessionList) == 0 {
-			return "No sessions found", true, nil
+			return "No sessions found.", true, nil
 		}
-		availableSessions := "Available sessions:\n\n"
+
+		// Add ```text so markdown doesn't wreck the format
+		availableSessions := "```text"
+		availableSessions += "Available sessions:\n\n"
+		availableSessions += "ID\t\t\tCreated\t\t\tLast Accessed\t\tModel\t\tProvider\n"
+		availableSessions += "--\t\t\t-------\t\t\t-------------\t\t-----\t\t--------\n"
+
 		for _, session := range sessionList {
 			metadata, err := session.LoadMetadata()
 			if err != nil {
-				fmt.Printf("%s\t\t<error loading metadata>\n", session.ID)
+				availableSessions += fmt.Sprintf("%s\t\t<error loading metadata>\n", session.ID)
 				continue
 			}
 
-			availableSessions += fmt.Sprintf("ID: %s\nCreated: %s\nLast Accessed: %s\nModel: %s\nProvider: %s\n\n",
+			availableSessions += fmt.Sprintf("%s\t%s\t%s\t%s\t%s\n",
 				session.ID,
-				metadata.CreatedAt.Format("2006-01-02 15:04:05"),
-				metadata.LastAccessed.Format("2006-01-02 15:04:05"),
+				metadata.CreatedAt.Format("2006-01-02 15:04"),
+				metadata.LastAccessed.Format("2006-01-02 15:04"),
 				metadata.ModelID,
 				metadata.ProviderID)
 		}
-
+		// close the ```text box
+		availableSessions += "```"
 		return availableSessions, true, nil
 	}
 
