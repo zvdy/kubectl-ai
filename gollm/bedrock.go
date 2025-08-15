@@ -146,7 +146,8 @@ type bedrockChat struct {
 }
 
 func (cs *bedrockChat) Initialize(history []*api.Message) error {
-	return fmt.Errorf("Initialize not yet implemented for bedrock")
+	klog.Warning("chat history persistence is not supported for provider 'bedrock', using in-memory chat history")
+	return nil
 }
 
 // Send sends a message to the chat and returns the response

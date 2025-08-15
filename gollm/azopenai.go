@@ -271,7 +271,8 @@ func (c *AzureOpenAIChat) IsRetryableError(err error) bool {
 }
 
 func (c *AzureOpenAIChat) Initialize(messages []*api.Message) error {
-	return fmt.Errorf("Initialize not yet implemented for azopenai")
+	klog.Warning("chat history persistence is not supported for provider 'azopenai', using in-memory chat history")
+	return nil
 }
 
 func (c *AzureOpenAIChat) SendStreaming(ctx context.Context, contents ...any) (ChatResponseIterator, error) {

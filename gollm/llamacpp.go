@@ -296,7 +296,8 @@ func (c *LlamaCppChat) IsRetryableError(err error) bool {
 }
 
 func (c *LlamaCppChat) Initialize(messages []*api.Message) error {
-	return fmt.Errorf("Initialize not yet implemented for llamacpp")
+	klog.Warning("chat history persistence is not supported for provider 'llamacpp', using in-memory chat history")
+	return nil
 }
 
 func ptrTo[T any](t T) *T {

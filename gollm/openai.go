@@ -424,7 +424,8 @@ func (cs *openAIChatSession) IsRetryableError(err error) bool {
 }
 
 func (cs *openAIChatSession) Initialize(messages []*api.Message) error {
-	return fmt.Errorf("Initialize not yet implemented for openai")
+	klog.Warning("chat history persistence is not supported for provider 'openai', using in-memory chat history")
+	return nil
 }
 
 // Helper structs for ChatResponse interface

@@ -210,7 +210,8 @@ func (c *OllamaChat) SendStreaming(ctx context.Context, contents ...any) (ChatRe
 }
 
 func (c *OllamaChat) Initialize(messages []*kctlApi.Message) error {
-	return fmt.Errorf("Initialize not yet implemented for ollama")
+	klog.Warning("chat history persistence is not supported for provider 'ollama', using in-memory chat history")
+	return nil
 }
 
 type OllamaChatResponse struct {

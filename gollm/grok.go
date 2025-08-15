@@ -380,8 +380,9 @@ func (cs *grokChatSession) IsRetryableError(err error) bool {
 	return DefaultIsRetryableError(err)
 }
 
-func (cs *grokChatSession) Initialize(history []*api.Message) error {
-	return fmt.Errorf("LoadHistory not yet implemented for grok")
+func (cs *grokChatSession) Initialize(messages []*api.Message) error {
+	klog.Warning("chat history persistence is not supported for provider 'grok', using in-memory chat history")
+	return nil
 }
 
 // --- Helper structs for ChatResponse interface ---
