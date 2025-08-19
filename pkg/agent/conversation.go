@@ -200,13 +200,7 @@ func (s *Agent) Init(ctx context.Context) error {
 	}
 
 	if session, ok := s.ChatMessageStore.(*sessions.Session); ok {
-		metadata, err := session.LoadMetadata()
-		if err != nil {
-			return fmt.Errorf("failed to load session metadata: %w", err)
-		}
-		s.session.ID = session.ID
-		s.session.CreatedAt = metadata.CreatedAt
-		s.session.LastModified = metadata.LastAccessed
+		s.loadSession(session.ID)
 	} else {
 		s.session.ID = uuid.New().String()
 		s.session.CreatedAt = time.Now()
@@ -741,7 +735,68 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 		return availableSessions, true, nil
 	}
 
+	if strings.HasPrefix(query, "resume-session") {
+		parts := strings.Split(query, " ")
+		if len(parts) != 2 {
+			return "Invalid command. Usage: resume-session <session_id>", true, nil
+		}
+		sessionID := parts[1]
+		if err := c.loadSession(sessionID); err != nil {
+			return "", false, err
+		}
+		return fmt.Sprintf("Resumed session %s.", sessionID), true, nil
+	}
+
 	return "", false, nil
+}
+
+// loadSession loads a session by ID (or latest), updates the agent's state, and re-initializes the chat.
+func (c *Agent) loadSession(sessionID string) error {
+	manager, err := sessions.NewSessionManager()
+	if err != nil {
+		return fmt.Errorf("failed to create session manager: %w", err)
+	}
+
+	var session *sessions.Session
+	if sessionID == "" || sessionID == "latest" {
+		s, err := manager.GetLatestSession()
+		if err != nil {
+			return fmt.Errorf("failed to get latest session: %w", err)
+		}
+		if s == nil {
+			// This can happen if GetLatestSession returns nil, nil (no sessions exist)
+			return fmt.Errorf("no sessions found to resume")
+		}
+		session = s
+	} else {
+		s, err := manager.FindSessionByID(sessionID)
+		if err != nil {
+			return fmt.Errorf("failed to get session %q: %w", sessionID, err)
+		}
+		session = s
+	}
+
+	c.sessionMu.Lock()
+	defer c.sessionMu.Unlock()
+
+	c.ChatMessageStore = session
+	c.session.ChatMessageStore = session
+	c.session.Messages = session.ChatMessages()
+	metadata, err := session.LoadMetadata()
+	if err != nil {
+		return fmt.Errorf("failed to load session metadata: %w", err)
+	}
+	c.session.ID = session.ID
+	c.session.CreatedAt = metadata.CreatedAt
+	c.session.LastModified = metadata.LastAccessed
+
+	if c.llmChat != nil {
+		if err := c.llmChat.Initialize(c.session.ChatMessageStore.ChatMessages()); err != nil {
+			return fmt.Errorf("failed to re-initialize chat with new session: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (c *Agent) listModels(ctx context.Context) ([]string, error) {
