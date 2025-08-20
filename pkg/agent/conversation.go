@@ -76,6 +76,7 @@ type Agent struct {
 	// to be combined with PromptTemplateFile
 	ExtraPromptPaths []string
 	Model            string
+	Provider         string
 
 	RemoveWorkDir bool
 
@@ -696,6 +697,13 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 		}
 		return "Session not found (session persistence not enabled)", true, nil
 
+	case "save-session":
+		savedSessionID, err := c.SaveSession()
+		if err != nil {
+			return "", false, fmt.Errorf("failed to save session: %w", err)
+		}
+		return "Saved session as " + savedSessionID, true, nil
+
 	case "sessions":
 		manager, err := sessions.NewSessionManager()
 		if err != nil {
@@ -748,6 +756,41 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 	}
 
 	return "", false, nil
+}
+
+func (c *Agent) SaveSession() (string, error) {
+	c.sessionMu.Lock()
+	defer c.sessionMu.Unlock()
+
+	manager, err := sessions.NewSessionManager()
+	if err != nil {
+		return "", fmt.Errorf("failed to create session manager: %w", err)
+	}
+	foundSession, _ := manager.FindSessionByID(c.session.ID)
+	if foundSession != nil {
+		return foundSession.ID, nil
+	}
+	metadata := sessions.Metadata{
+		CreatedAt:    c.session.CreatedAt,
+		LastAccessed: time.Now(),
+		ModelID:      c.Model,
+		ProviderID:   c.Provider,
+	}
+	newSession, err := manager.NewSession(metadata)
+	if err != nil {
+		return "", fmt.Errorf("failed to create new session: %w", err)
+	}
+
+	messages := c.ChatMessageStore.ChatMessages()
+	if err := newSession.SetChatMessages(messages); err != nil {
+		return "", fmt.Errorf("failed to save chat messages to new session: %w", err)
+	}
+
+	c.ChatMessageStore = newSession
+	c.session.ChatMessageStore = newSession
+	c.llmChat.Initialize(c.ChatMessageStore.ChatMessages())
+
+	return newSession.ID, nil
 }
 
 // loadSession loads a session by ID (or latest), updates the agent's state, and re-initializes the chat.
