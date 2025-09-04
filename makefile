@@ -92,10 +92,8 @@ generate:
 	go generate ./internal/mocks
 
 verify-mocks:
-	# Re-generate and fail if it produces diffs
-	go generate ./internal/mocks
-	git diff --quiet --exit-code -- internal/mocks || \
-	  (echo "Mocks are stale. Run 'make generate' and commit changes." && exit 1)
+	@echo "λ Verifying mocks..."
+	./dev/ci/presubmits/verify-mocks.sh
 # --- Generation Tasks ---
 generate-actions: ## Generate GitHub Actions workflows
 	@echo "λ Generating GitHub Actions workflows..."
