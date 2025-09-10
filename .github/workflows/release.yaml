@@ -23,6 +23,9 @@ jobs:
         with:
           check-latest: true
 
+      - name: Install mockgen
+        run: go install github.com/golang/mock/mockgen@latest
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
