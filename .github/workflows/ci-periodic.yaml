@@ -41,6 +41,8 @@ jobs:
         uses: ./.github/actions/kind-cluster-setup
         with:
           cluster_name: periodic-eval-cluster
+        continue-on-error: false
+        timeout-minutes: 10
       - name: Run an easy eval
         run: |
           TEST_ARGS="--llm-provider vertexai --models gemini-2.5-pro --concurrency=1 --task-pattern=scale-" ./dev/ci/periodics/run-evals.sh
