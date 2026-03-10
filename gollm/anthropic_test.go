@@ -42,11 +42,11 @@ func TestAnthropicProviderRegistration(t *testing.T) {
 // contents are correctly converted to Anthropic MessageParam history entries.
 func TestAnthropicAddContentsToHistory(t *testing.T) {
 	tests := []struct {
-		name        string
-		contents    []any
-		wantMsgs    int
-		wantRole    anthropic.MessageParamRole
-		wantErr     bool
+		name     string
+		contents []any
+		wantMsgs int
+		wantRole anthropic.MessageParamRole
+		wantErr  bool
 	}{
 		{
 			name:     "string content creates user message",
@@ -67,7 +67,7 @@ func TestAnthropicAddContentsToHistory(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name:    "unhandled content type returns error",
+			name:     "unhandled content type returns error",
 			contents: []any{12345},
 			wantMsgs: 0,
 			wantErr:  true,
@@ -281,9 +281,9 @@ func TestAnthropicIsRetryableError(t *testing.T) {
 	session := &anthropicChatSession{}
 
 	tests := []struct {
-		name       string
-		err        error
-		wantRetry  bool
+		name      string
+		err       error
+		wantRetry bool
 	}{
 		{
 			name:      "nil error is not retryable",
