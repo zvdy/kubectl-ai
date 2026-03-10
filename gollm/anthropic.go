@@ -96,7 +96,7 @@ func (c *AnthropicClient) Close() error {
 // StartChat starts a new chat session with the specified system prompt and model.
 func (c *AnthropicClient) StartChat(systemPrompt, model string) Chat {
 	selectedModel := getAnthropicModel(model)
-	klog.V(1).Infof("Starting new Anthropic chat session with model: %s", selectedModel)
+	klog.V(2).Infof("Starting new Anthropic chat session with model: %s", selectedModel)
 
 	return &anthropicChatSession{
 		client:           c.client,
@@ -260,10 +260,8 @@ func (c *anthropicChatSession) addContentsToHistory(contents []any) error {
 	for _, content := range contents {
 		switch v := content.(type) {
 		case string:
-			klog.V(2).Infof("Adding user text message to Anthropic history")
 			blocks = append(blocks, anthropic.NewTextBlock(v))
 		case FunctionCallResult:
-			klog.V(2).Infof("Adding tool result to Anthropic history: Name=%s, ID=%s", v.Name, v.ID)
 			resultJSON, err := json.Marshal(v.Result)
 			if err != nil {
 				return fmt.Errorf("failed to marshal function call result %q: %w", v.Name, err)
@@ -660,17 +658,17 @@ func (r *anthropicCompletionResponse) UsageMetadata() any {
 
 func getAnthropicModel(model string) string {
 	if model != "" && strings.HasPrefix(model, "claude") {
-		klog.V(2).Infof("Using explicitly provided Anthropic model: %s", model)
+		klog.V(4).Infof("Using explicitly provided Anthropic model: %s", model)
 		return model
 	}
 	if model != "" {
-		klog.V(1).Infof("Ignoring non-Claude model %q passed by CLI default, falling back", model)
+		klog.V(2).Infof("Ignoring non-Claude model %q, falling back to default", model)
 	}
 	if anthropicDefaultModel != "" {
-		klog.V(1).Infof("Using Anthropic model from environment: %s", anthropicDefaultModel)
+		klog.V(2).Infof("Using Anthropic model from environment: %s", anthropicDefaultModel)
 		return anthropicDefaultModel
 	}
 	defaultModel := "claude-sonnet-4-6"
-	klog.V(1).Infof("Using default Anthropic model: %s", defaultModel)
+	klog.V(2).Infof("Using default Anthropic model: %s", defaultModel)
 	return defaultModel
 }
