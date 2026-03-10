@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/api"
@@ -34,6 +35,7 @@ var (
 	anthropicDefaultModel     string
 	anthropicPromptCaching    bool
 	anthropicExtendedThinking bool
+	anthropicMaxTokens        int64
 )
 
 func init() {
@@ -49,6 +51,13 @@ func init() {
 
 	if v := os.Getenv("ANTHROPIC_EXTENDED_THINKING"); strings.ToLower(v) == "true" {
 		anthropicExtendedThinking = true
+	}
+
+	anthropicMaxTokens = 4096 // default
+	if v := os.Getenv("ANTHROPIC_MAX_TOKENS"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			anthropicMaxTokens = n
+		}
 	}
 
 	if err := RegisterProvider("anthropic", newAnthropicClientFactory); err != nil {
@@ -304,10 +313,10 @@ func (c *anthropicChatSession) Send(ctx context.Context, contents ...any) (ChatR
 	}
 
 	const thinkingBudget = 8000
-	maxTokens := int64(4096)
+	maxTokens := anthropicMaxTokens
 	if c.extendedThinking {
 		// max_tokens must exceed budget_tokens
-		maxTokens = thinkingBudget + 4096
+		maxTokens = thinkingBudget + anthropicMaxTokens
 	}
 
 	params := anthropic.MessageNewParams{
@@ -347,10 +356,10 @@ func (c *anthropicChatSession) SendStreaming(ctx context.Context, contents ...an
 	}
 
 	const thinkingBudget = 8000
-	maxTokens := int64(4096)
+	maxTokens := anthropicMaxTokens
 	if c.extendedThinking {
 		// max_tokens must exceed budget_tokens
-		maxTokens = thinkingBudget + 4096
+		maxTokens = thinkingBudget + anthropicMaxTokens
 	}
 
 	params := anthropic.MessageNewParams{
@@ -413,6 +422,8 @@ func (c *anthropicChatSession) SendStreaming(ctx context.Context, contents ...an
 					if pt, ok := toolsByIndex[ev.Index]; ok {
 						pt.input.WriteString(delta.PartialJSON)
 					}
+				case anthropic.ThinkingDelta:
+					// thinking content is kept in history via accumulator, not yielded to UI
 				}
 
 			case anthropic.ContentBlockStopEvent:
@@ -451,6 +462,10 @@ func (c *anthropicChatSession) SendStreaming(ctx context.Context, contents ...an
 		// Append accumulated assistant message to history
 		if len(acc.Content) > 0 {
 			c.messages = append(c.messages, acc.ToParam())
+		}
+		// Yield final usage so callers can observe token/cache counts
+		if acc.Usage.InputTokens > 0 || acc.Usage.OutputTokens > 0 {
+			yield(&anthropicStreamResponse{usage: &acc.Usage}, nil)
 		}
 	}, nil
 }
@@ -496,11 +511,15 @@ func (r *anthropicResponse) Candidates() []Candidate {
 type anthropicStreamResponse struct {
 	text         string
 	functionCall *FunctionCall
+	usage        *anthropic.Usage
 }
 
 var _ ChatResponse = (*anthropicStreamResponse)(nil)
 
 func (r *anthropicStreamResponse) UsageMetadata() any {
+	if r.usage != nil {
+		return r.usage
+	}
 	return nil
 }
 

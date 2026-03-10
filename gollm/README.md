@@ -314,6 +314,7 @@ client, err := gollm.NewClient(ctx, "openai://api.openai.com",
 | `ANTHROPIC_MODEL` | Default Claude model to use | `claude-sonnet-4-6` |
 | `ANTHROPIC_PROMPT_CACHING` | Enable prompt caching (`"false"` to disable) | `true` |
 | `ANTHROPIC_EXTENDED_THINKING` | Enable extended thinking(`"true"` to enable) | `false` |
+| `ANTHROPIC_MAX_TOKENS` | Max output tokens per request | `4096` |
 
 ### Anthropic provider features
 
