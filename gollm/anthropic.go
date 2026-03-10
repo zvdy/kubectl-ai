@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -136,9 +136,26 @@ func (c *AnthropicClient) SetResponseSchema(schema *Schema) error {
 // ListModels returns the list of supported Anthropic Claude models.
 func (c *AnthropicClient) ListModels(ctx context.Context) ([]string, error) {
 	return []string{
+		// Claude 4.6 (latest)
 		"claude-opus-4-6",
 		"claude-sonnet-4-6",
+		// Claude 4.5
+		"claude-opus-4-5",
+		"claude-opus-4-5-20251101",
+		"claude-sonnet-4-5",
+		"claude-sonnet-4-5-20250929",
 		"claude-haiku-4-5",
+		"claude-haiku-4-5-20251001",
+		// Claude 3.7
+		"claude-3-7-sonnet-latest",
+		"claude-3-7-sonnet-20250219",
+		// Claude 3.5
+		"claude-3-5-haiku-latest",
+		"claude-3-5-haiku-20241022",
+		// Claude 3
+		"claude-3-opus-latest",
+		"claude-3-opus-20240229",
+		"claude-3-haiku-20240307",
 	}, nil
 }
 
