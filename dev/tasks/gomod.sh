@@ -21,8 +21,26 @@ set -o pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd ${REPO_ROOT}
 
+# retry <max_attempts> <delay_seconds> <command...>
+# Retries a command on failure with a fixed delay between attempts.
+# Useful for transient Go proxy / network errors (e.g. HTTP/2 INTERNAL_ERROR).
+retry() {
+  local max=$1; shift
+  local delay=$1; shift
+  local attempt=1
+  until "$@"; do
+    if (( attempt >= max )); then
+      echo "ERROR: command failed after ${max} attempts: $*" >&2
+      return 1
+    fi
+    echo "WARNING: attempt ${attempt}/${max} failed, retrying in ${delay}s: $*" >&2
+    sleep "${delay}"
+    (( attempt++ ))
+  done
+}
+
 for f in $(find ${REPO_ROOT} -name go.mod); do
   cd $(dirname ${f})
   rm go.sum
-  go mod tidy
+  retry 3 5 go mod tidy
 done
