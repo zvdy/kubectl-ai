@@ -11,6 +11,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cognitiveservices/armcognitiveservices v1.7.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/subscription/armsubscription v1.2.0
 	github.com/GoogleCloudPlatform/kubectl-ai v0.0.19
+	github.com/anthropics/anthropic-sdk-go v1.26.0
 	github.com/aws/aws-sdk-go-v2 v1.36.6
 	github.com/aws/aws-sdk-go-v2/config v1.29.18
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.31.1
@@ -26,7 +27,6 @@ require (
 	cloud.google.com/go/compute/metadata v0.6.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.1 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.4.2 // indirect
-	github.com/anthropics/anthropic-sdk-go v1.26.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.11 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.71 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.33 // indirect
