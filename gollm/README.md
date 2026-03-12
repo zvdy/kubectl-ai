@@ -34,6 +34,7 @@ gollm provides a consistent API for interacting with various LLM providers, maki
 | Ollama | `ollama://` | Local Ollama models |
 | LlamaCPP | `llamacpp://` | Local LlamaCPP models |
 | Grok | `grok://` | xAI's Grok models |
+| Anthropic | `anthropic://` | Claude models with native tool use, prompt caching, and extended thinking |
 
 ## Quick Start
 
@@ -301,6 +302,71 @@ client, err := gollm.NewClient(ctx, "openai://api.openai.com",
 - `LLM_CLIENT`: The provider URL to use (e.g., "openai://api.openai.com")
 - `LLM_SKIP_VERIFY_SSL`: Set to "1" or "true" to skip SSL certificate verification
 - Provider-specific API keys (e.g., `OPENAI_API_KEY`, `GOOGLE_API_KEY`)
+
+<details>
+<summary><h3>Anthropic-specific environment variables and provider features</h3></summary>
+
+#### Anthropic-specific environment variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ANTHROPIC_API_KEY` | Anthropic API key (required) | — |
+| `ANTHROPIC_MODEL` | Default Claude model to use | `claude-sonnet-4-6` |
+| `ANTHROPIC_PROMPT_CACHING` | Enable prompt caching (`"false"` to disable) | `true` |
+| `ANTHROPIC_EXTENDED_THINKING` | Enable extended thinking(`"true"` to enable) | `false` |
+| `ANTHROPIC_MAX_TOKENS` | Max output tokens per request | `4096` |
+
+### Anthropic provider features
+
+#### Prompt caching
+
+Enabled by default. Anthropic's [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
+attaches a `cache_control` breakpoint to the system prompt and the last tool
+definition so that both are reused from cache on every subsequent turn. Because
+kubectl-ai's system prompt is large and repeated verbatim each turn, this
+typically cuts input token costs significantly after the first request.
+
+Set `ANTHROPIC_PROMPT_CACHING=false` to disable.
+
+#### Extended thinking
+
+Disabled by default. When enabled, Claude produces a `thinking` content block
+containing its internal reasoning before giving a final answer. This can improve
+accuracy on complex multi-step queries (e.g. root-cause analysis across multiple
+Kubernetes resources). Requires a model that supports extended thinking
+(`claude-3-7-sonnet-20250219` or later) and reserves 8 000 tokens for the
+thinking budget.
+
+The thinking block is kept in the conversation history (required by the API for
+multi-turn consistency) but is **not** shown in the terminal output.
+
+```bash
+ANTHROPIC_EXTENDED_THINKING=true \
+    kubectl-ai --llm-provider=anthropic --model claude-3-7-sonnet-20250219 \
+    "why is my pod crashlooping"
+```
+
+Set `ANTHROPIC_EXTENDED_THINKING=true` to enable.
+
+#### Native streaming
+
+The Anthropic provider uses the official SSE event stream directly, bypassing
+the OpenAI compatibility shim. Tool input JSON is accumulated across
+`content_block_delta` events and only emitted as a complete `FunctionCall` once
+the block closes, so partial JSON is never forwarded to the agent loop.
+
+#### Retryable errors
+
+The provider maps Anthropic-native HTTP status codes to retry decisions:
+
+| Status | Meaning | Retried? |
+|--------|---------|----------|
+| 429 | Rate limit | Yes |
+| 529 | Overloaded | Yes |
+| 5xx | Server error | Yes |
+| 4xx (other) | Client error | No |
+
+</details>
 
 ## Error Handling
 
